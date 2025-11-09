@@ -1,0 +1,7 @@
+Manifest-Version: 1.0
+Main-Class: main.StudyConnectMain
+Class-Path: lib/flatlaf-3.2.5.jar lib/flatlaf-intellij-themes-3.2.5.jar
+Created-By: StudyConnect Team
+Implementation-Title: StudyConnect
+Implementation-Version: 1.0.0
+Implementation-Vendor: Network Programming Course
