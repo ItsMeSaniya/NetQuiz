@@ -17,13 +17,16 @@ public class Client {
     private Socket socket;
     private PeerConnection connection;
     private MessageHandler messageHandler;
+    private String currentUsername;
+    private NotificationServer notificationServer;
     private boolean connected;
     private boolean useSSL = true; // Enable SSL by default
     
-    public Client(String host, int port, MessageHandler messageHandler) {
+    public Client(String host, int port, MessageHandler messageHandler, String currentUsername) {
         this.host = host;
         this.port = port;
         this.messageHandler = messageHandler;
+        this.currentUsername = currentUsername;
         this.connected = false;
     }
     
@@ -52,7 +55,7 @@ public class Client {
                 socket.connect(new InetSocketAddress(host, port), 10000);
             }
             
-            connection = new PeerConnection(socket, messageHandler);
+            connection = new PeerConnection(socket, messageHandler, currentUsername);
             connected = true;
             
             // Start listening for messages
