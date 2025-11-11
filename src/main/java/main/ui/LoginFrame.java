@@ -96,27 +96,35 @@ public class LoginFrame extends JFrame {
         panel.add(titleLabel);
         panel.add(Box.createVerticalStrut(30));
         
-        // Username
+        // Username Label
         JLabel userLabel = new JLabel("Username");
         userLabel.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        userLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
         panel.add(userLabel);
         panel.add(Box.createVerticalStrut(5));
         
+        // Username Field
         usernameField = new JTextField();
         usernameField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-        usernameField.setMaximumSize(new Dimension(Integer.MAX_VALUE, 35));
+        usernameField.setMaximumSize(new Dimension(300, 35));
+        usernameField.setAlignmentX(Component.CENTER_ALIGNMENT);
+        usernameField.setHorizontalAlignment(JTextField.CENTER);
         panel.add(usernameField);
         panel.add(Box.createVerticalStrut(20));
         
-        // Password
+        // Password Label
         JLabel passLabel = new JLabel("Password");
         passLabel.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        passLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
         panel.add(passLabel);
         panel.add(Box.createVerticalStrut(5));
         
+        // Password Field
         passwordField = new JPasswordField();
         passwordField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-        passwordField.setMaximumSize(new Dimension(Integer.MAX_VALUE, 35));
+        passwordField.setMaximumSize(new Dimension(300, 35));
+        passwordField.setAlignmentX(Component.CENTER_ALIGNMENT);
+        passwordField.setHorizontalAlignment(JTextField.CENTER);
         panel.add(passwordField);
         panel.add(Box.createVerticalStrut(30));
         
@@ -126,7 +134,8 @@ public class LoginFrame extends JFrame {
         loginButton.setBackground(new Color(66, 133, 244));
         loginButton.setForeground(Color.WHITE);
         loginButton.setFocusPainted(false);
-        loginButton.setMaximumSize(new Dimension(Integer.MAX_VALUE, 45));
+        loginButton.setMaximumSize(new Dimension(300, 45));
+        loginButton.setAlignmentX(Component.CENTER_ALIGNMENT);
         loginButton.setCursor(new Cursor(Cursor.HAND_CURSOR));
         loginButton.addActionListener(e -> handleLogin());
         panel.add(loginButton);
@@ -135,6 +144,7 @@ public class LoginFrame extends JFrame {
         // Switch to register
         JPanel switchPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
         switchPanel.setOpaque(false);
+        switchPanel.setAlignmentX(Component.CENTER_ALIGNMENT);
         JLabel switchLabel = new JLabel("Don't have an account? ");
         switchLabel.setFont(new Font("Segoe UI", Font.PLAIN, 13));
         switchModeButton = new JButton("Register");
