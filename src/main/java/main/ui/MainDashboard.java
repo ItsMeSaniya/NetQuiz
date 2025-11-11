@@ -43,6 +43,9 @@ public class MainDashboard extends JFrame implements MessageHandler {
     private JTextField p2pMessageField;
     private JButton p2pSendButton;
     
+    // File sharing component
+    private JComboBox<String> fileTargetSelector;
+    
     // Quiz components
     private QuizCreatorPanel quizCreatorPanel;
     private QuizParticipationPanel quizParticipationPanel;
@@ -345,40 +348,39 @@ public class MainDashboard extends JFrame implements MessageHandler {
         JScrollPane chatScrollPane = new JScrollPane(chatArea);
         chatScrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_ALWAYS);
         
-        // Message input panel
-        JPanel inputPanel = new JPanel(new BorderLayout(10, 0));
-        inputPanel.setBackground(Color.WHITE);
-        inputPanel.setBorder(new EmptyBorder(10, 0, 0, 0));
+        // File sharing panel (only panel at bottom now)
+        JPanel filePanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 10));
+        filePanel.setBackground(Color.WHITE);
+        filePanel.setBorder(BorderFactory.createTitledBorder(
+            BorderFactory.createLineBorder(new Color(200, 200, 200)), 
+            "File Sharing",
+            javax.swing.border.TitledBorder.DEFAULT_JUSTIFICATION,
+            javax.swing.border.TitledBorder.DEFAULT_POSITION,
+            new Font("Segoe UI", Font.BOLD, 12)));
         
-        messageField = new JTextField();
-        messageField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-        messageField.addActionListener(e -> sendMessage());
+        JLabel selectPeerLabel = new JLabel("Send to:");
+        selectPeerLabel.setFont(new Font("Segoe UI", Font.PLAIN, 13));
         
-        sendButton = new JButton("Send");
-        sendButton.setBackground(new Color(66, 133, 244));
-        sendButton.setForeground(Color.WHITE);
-        sendButton.setFocusPainted(false);
-        sendButton.setPreferredSize(new Dimension(80, 35));
-        sendButton.addActionListener(e -> sendMessage());
+        fileTargetSelector = new JComboBox<>();
+        fileTargetSelector.addItem("Select recipient...");
+        fileTargetSelector.setPreferredSize(new Dimension(200, 30));
+        fileTargetSelector.setFont(new Font("Segoe UI", Font.PLAIN, 13));
         
-        sendFileButton = new JButton("Send File");
+        JButton sendFileButton = new JButton("📎 Send File");
         sendFileButton.setBackground(new Color(251, 188, 5));
         sendFileButton.setForeground(Color.WHITE);
+        sendFileButton.setFont(new Font("Segoe UI", Font.BOLD, 13));
         sendFileButton.setFocusPainted(false);
-        sendFileButton.setPreferredSize(new Dimension(100, 35));
-        sendFileButton.addActionListener(e -> sendFile());
+        sendFileButton.setPreferredSize(new Dimension(120, 35));
+        sendFileButton.addActionListener(e -> selectAndSendFile());
         
-        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 5, 0));
-        buttonPanel.setOpaque(false);
-        buttonPanel.add(sendFileButton);
-        buttonPanel.add(sendButton);
-        
-        inputPanel.add(messageField, BorderLayout.CENTER);
-        inputPanel.add(buttonPanel, BorderLayout.EAST);
+        filePanel.add(selectPeerLabel);
+        filePanel.add(fileTargetSelector);
+        filePanel.add(sendFileButton);
         
         panel.add(titleLabel, BorderLayout.NORTH);
         panel.add(chatScrollPane, BorderLayout.CENTER);
-        panel.add(inputPanel, BorderLayout.SOUTH);
+        panel.add(filePanel, BorderLayout.SOUTH);
         
         return panel;
     }
@@ -744,8 +746,23 @@ public class MainDashboard extends JFrame implements MessageHandler {
         Message message = new Message(currentUser.getUsername(), selectedPeer, 
             text, Message.MessageType.PEER_TO_PEER);
         
-        // Send through server (first connected peer is always the server)
-        if (!connectedPeers.isEmpty()) {
+        boolean isAdmin = currentUser.getUsername().equalsIgnoreCase("admin") && 
+                          currentUser.getPassword().equals("admin");
+        
+        if (isAdmin && server != null && server.isRunning()) {
+            // Admin sends directly to the client through peer connection
+            PeerConnection targetConnection = peerConnections.get(selectedPeer);
+            if (targetConnection != null) {
+                targetConnection.sendMessage(message);
+                appendToP2PChat("You → " + selectedPeer + ": " + text);
+                p2pMessageField.setText("");
+            } else {
+                JOptionPane.showMessageDialog(this,
+                    "Target peer not found!",
+                    "Connection Error", JOptionPane.ERROR_MESSAGE);
+            }
+        } else if (!connectedPeers.isEmpty()) {
+            // Client sends through server (first connected peer is always the server)
             connectedPeers.get(0).sendMessage(message);
             appendToP2PChat("You → " + selectedPeer + ": " + text);
             p2pMessageField.setText("");
@@ -817,30 +834,135 @@ public class MainDashboard extends JFrame implements MessageHandler {
         leaderboardArea.setText(sb.toString());
     }
     
-    private void sendFile() {
-        JFileChooser fileChooser = new JFileChooser();
-        int result = fileChooser.showOpenDialog(this);
+    /**
+     * Select and send a file to a specific peer
+     */
+    private void selectAndSendFile() {
+        String targetPeer = (String) fileTargetSelector.getSelectedItem();
         
+        if (targetPeer == null || targetPeer.equals("Select recipient...")) {
+            JOptionPane.showMessageDialog(this,
+                "Please select a recipient first",
+                "No Recipient", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        
+        // Open file chooser
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setDialogTitle("Select File to Send to " + targetPeer);
+        
+        int result = fileChooser.showOpenDialog(this);
         if (result == JFileChooser.APPROVE_OPTION) {
-            java.io.File file = fileChooser.getSelectedFile();
+            java.io.File selectedFile = fileChooser.getSelectedFile();
             
-            try {
-                byte[] fileData = main.util.FileUtil.readFileToBytes(file);
-                FileTransfer transfer = new FileTransfer(file.getName(), file.length(),
-                    fileData, currentUser.getUsername(), "all");
-                
-                // Send to all connected peers
-                for (Client client : connectedPeers) {
-                    client.sendFile(transfer);
+            // Show confirmation dialog
+            int confirm = JOptionPane.showConfirmDialog(this,
+                "Send file to " + targetPeer + "?\n\n" +
+                "File: " + selectedFile.getName() + "\n" +
+                "Size: " + formatFileSize(selectedFile.length()) + "\n" +
+                "Recipient: " + targetPeer,
+                "Confirm File Send",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.QUESTION_MESSAGE);
+            
+            if (confirm == JOptionPane.YES_OPTION) {
+                sendFileToUser(targetPeer, selectedFile);
+            }
+        }
+    }
+    
+    /**
+     * Send file to a specific user
+     */
+    private void sendFileToUser(String targetUser, java.io.File file) {
+        try {
+            // Read file data
+            byte[] fileData = java.nio.file.Files.readAllBytes(file.toPath());
+            
+            // Create file transfer object
+            FileTransfer fileTransfer = new FileTransfer(
+                file.getName(),
+                file.length(),
+                fileData,
+                currentUser.getUsername(),
+                targetUser
+            );
+            
+            // Create file message
+            Message fileMessage = new Message(
+                currentUser.getUsername(),
+                targetUser,
+                "Sending file: " + file.getName(),
+                Message.MessageType.FILE
+            );
+            fileMessage.setFileTransfer(fileTransfer);
+            
+            boolean isAdmin = currentUser.getUsername().equalsIgnoreCase("admin") && 
+                              currentUser.getPassword().equals("admin");
+            
+            if (isAdmin) {
+                // Admin sends to specific client
+                PeerConnection targetConnection = peerConnections.get(targetUser);
+                if (targetConnection != null) {
+                    targetConnection.sendMessage(fileMessage);
+                    appendToChat("[FILE] Sent '" + file.getName() + "' to " + targetUser + 
+                        " (" + formatFileSize(file.length()) + ")");
+                } else {
+                    JOptionPane.showMessageDialog(this,
+                        "Target user not found!",
+                        "Send Error", JOptionPane.ERROR_MESSAGE);
                 }
-                
-                appendToChat("System: Sent file - " + file.getName() + 
-                    " (" + transfer.getFileSizeFormatted() + ")");
-                
+            } else {
+                // Client sends through server (server will route it)
+                if (!connectedPeers.isEmpty()) {
+                    connectedPeers.get(0).sendMessage(fileMessage);
+                    appendToChat("[FILE] Sent '" + file.getName() + "' to " + targetUser + 
+                        " (" + formatFileSize(file.length()) + ")");
+                } else {
+                    JOptionPane.showMessageDialog(this,
+                        "Not connected to server!",
+                        "Connection Error", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+            
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this,
+                "Failed to send file: " + e.getMessage(),
+                "File Send Error", JOptionPane.ERROR_MESSAGE);
+            e.printStackTrace();
+        }
+    }
+    
+    /**
+     * Format file size for display
+     */
+    private String formatFileSize(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format("%.2f KB", bytes / 1024.0);
+        return String.format("%.2f MB", bytes / (1024.0 * 1024.0));
+    }
+    
+    /**
+     * Save received file to disk
+     */
+    private void saveReceivedFile(FileTransfer fileTransfer) {
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setDialogTitle("Save Received File");
+        fileChooser.setSelectedFile(new java.io.File(fileTransfer.getFileName()));
+        
+        int result = fileChooser.showSaveDialog(this);
+        if (result == JFileChooser.APPROVE_OPTION) {
+            java.io.File saveFile = fileChooser.getSelectedFile();
+            try {
+                java.nio.file.Files.write(saveFile.toPath(), fileTransfer.getFileData());
+                JOptionPane.showMessageDialog(this,
+                    "File saved successfully!\n" + saveFile.getAbsolutePath(),
+                    "File Saved", JOptionPane.INFORMATION_MESSAGE);
+                appendToChat("[FILE] Saved as: " + saveFile.getName());
             } catch (Exception e) {
                 JOptionPane.showMessageDialog(this,
-                    "Error sending file: " + e.getMessage(),
-                    "Error", JOptionPane.ERROR_MESSAGE);
+                    "Failed to save file: " + e.getMessage(),
+                    "Save Error", JOptionPane.ERROR_MESSAGE);
             }
         }
     }
@@ -891,9 +1013,13 @@ public class MainDashboard extends JFrame implements MessageHandler {
     
     private void updatePeerSelector(PeerConnection connection) {
         SwingUtilities.invokeLater(() -> {
-            // Rebuild peer selector list
+            // Rebuild peer selector list for P2P chat
             peerSelector.removeAllItems();
             peerSelector.addItem("Select a peer...");
+            
+            // Also update file target selector
+            fileTargetSelector.removeAllItems();
+            fileTargetSelector.addItem("Select recipient...");
             
             boolean isAdmin = currentUser.getUsername().equalsIgnoreCase("admin") && 
                               currentUser.getPassword().equals("admin");
@@ -901,6 +1027,7 @@ public class MainDashboard extends JFrame implements MessageHandler {
             // If this is NOT admin (client), add "Server (Admin)" option
             if (!isAdmin && !connectedPeers.isEmpty()) {
                 peerSelector.addItem("Server (Admin)");
+                fileTargetSelector.addItem("Server (Admin)");
             }
             
             // Add all server connections with usernames (admin side)
@@ -908,6 +1035,7 @@ public class MainDashboard extends JFrame implements MessageHandler {
                 String username = entry.getValue();
                 if (!username.equals(currentUser.getUsername())) {
                     peerSelector.addItem(username);
+                    fileTargetSelector.addItem(username);
                     // Also store reverse mapping for sending
                     peerConnections.put(username, entry.getKey());
                 }
@@ -920,6 +1048,7 @@ public class MainDashboard extends JFrame implements MessageHandler {
                 if (username != null && !username.equals(currentUser.getUsername()) 
                     && !username.equals("Server (Admin)")) {
                     peerSelector.addItem(username);
+                    fileTargetSelector.addItem(username);
                 }
             }
         });
@@ -940,6 +1069,35 @@ public class MainDashboard extends JFrame implements MessageHandler {
             case PEER_TO_PEER:
                 // Display received P2P message
                 appendToP2PChat(message.getSender() + " → You: " + message.getContent());
+                break;
+                
+            case FILE:
+                // File received
+                FileTransfer fileTransfer = message.getFileTransfer();
+                if (fileTransfer != null) {
+                    String sender = message.getSender();
+                    String fileName = fileTransfer.getFileName();
+                    long fileSize = fileTransfer.getFileData().length;
+                    
+                    appendToChat("[FILE] Received '" + fileName + "' from " + sender + 
+                        " (" + formatFileSize(fileSize) + ")");
+                    
+                    // Show download dialog
+                    SwingUtilities.invokeLater(() -> {
+                        int choice = JOptionPane.showConfirmDialog(this,
+                            "Received file: " + fileName + "\n" +
+                            "From: " + sender + "\n" +
+                            "Size: " + formatFileSize(fileSize) + "\n\n" +
+                            "Do you want to save this file?",
+                            "File Received", 
+                            JOptionPane.YES_NO_OPTION,
+                            JOptionPane.QUESTION_MESSAGE);
+                        
+                        if (choice == JOptionPane.YES_OPTION) {
+                            saveReceivedFile(fileTransfer);
+                        }
+                    });
+                }
                 break;
                 
             case USER_JOIN:

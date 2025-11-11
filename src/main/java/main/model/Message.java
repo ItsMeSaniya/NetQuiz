@@ -34,6 +34,9 @@ public class Message implements Serializable {
     private QuizAnswer quizAnswer;
     private QuizResult quizResult;
     
+    // File transfer field
+    private FileTransfer fileTransfer;
+    
     public Message() {
         this.timestamp = LocalDateTime.now();
     }
@@ -120,6 +123,14 @@ public class Message implements Serializable {
     
     public void setQuizResult(QuizResult quizResult) {
         this.quizResult = quizResult;
+    }
+    
+    public FileTransfer getFileTransfer() {
+        return fileTransfer;
+    }
+    
+    public void setFileTransfer(FileTransfer fileTransfer) {
+        this.fileTransfer = fileTransfer;
     }
     
     @Override

@@ -145,7 +145,8 @@ public class Server {
                 break;
                 
             case PEER_TO_PEER:
-                // Forward P2P message to target peer
+            case FILE:
+                // Forward P2P message or file to target peer
                 String targetUser = message.getReceiver();
                 PeerConnection targetConnection = null;
                 
@@ -159,7 +160,8 @@ public class Server {
                 
                 if (targetConnection != null) {
                     targetConnection.sendMessage(message);
-                    System.out.println("[SERVER] Forwarded P2P message from " + 
+                    String messageType = message.getType() == Message.MessageType.FILE ? "file" : "P2P message";
+                    System.out.println("[SERVER] Forwarded " + messageType + " from " + 
                         message.getSender() + " to " + targetUser);
                 } else {
                     System.err.println("[SERVER] Target user not found: " + targetUser);
