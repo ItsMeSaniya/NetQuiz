@@ -167,10 +167,20 @@ public class MainDashboard extends JFrame implements MessageHandler {
             serverPanel.setBorder(BorderFactory.createTitledBorder(
                 new LineBorder(new Color(200, 200, 200)), "Server Control"));
             
-            // IP Address display
-            ipLabel = new JLabel("IP: " + NetworkUtil.getLocalIPAddress());
+            // IP Address display (Local and Public)
+            String localIP = NetworkUtil.getLocalIPAddress();
+            String publicIP = getPublicIP();
+            
+            ipLabel = new JLabel("<html><b>Local IP:</b> " + localIP + "<br>" +
+                                 "<b>Public IP:</b> " + publicIP + "</html>");
             ipLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
             ipLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+            
+            // Connection instructions
+            JLabel infoLabel = new JLabel("<html><font size='2' color='gray'>" +
+                "Local: Same network users<br>" +
+                "Public: Internet users (port forward 8888)</font></html>");
+            infoLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
             
             // Port field
             JPanel portPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
@@ -199,6 +209,8 @@ public class MainDashboard extends JFrame implements MessageHandler {
             stopServerButton.addActionListener(e -> stopServer());
             
             serverPanel.add(ipLabel);
+            serverPanel.add(Box.createVerticalStrut(5));
+            serverPanel.add(infoLabel);
             serverPanel.add(Box.createVerticalStrut(10));
             serverPanel.add(portPanel);
             serverPanel.add(Box.createVerticalStrut(10));
@@ -1306,5 +1318,21 @@ public class MainDashboard extends JFrame implements MessageHandler {
             statusLabel.setText("Status: " + status);
             appendToChat("System: " + status);
         });
+    }
+    
+    /**
+     * Get public IP address from external service
+     */
+    private String getPublicIP() {
+        try {
+            java.net.URL url = new java.net.URL("https://api.ipify.org");
+            java.io.BufferedReader reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(url.openStream()));
+            String ip = reader.readLine();
+            reader.close();
+            return ip;
+        } catch (Exception e) {
+            return "Unavailable";
+        }
     }
 }
