@@ -20,7 +20,7 @@ public class Client {
     private String currentUsername;
     private NotificationServer notificationServer;
     private boolean connected;
-    private boolean useSSL = true; // Enable SSL by default
+    private boolean useSSL = false; // Disabled for compatibility with tunneling services
     
     public Client(String host, int port, MessageHandler messageHandler, String currentUsername) {
         this.host = host;
