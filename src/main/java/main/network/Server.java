@@ -122,28 +122,40 @@ public class Server {
      * Handle messages received from clients
      */
     private void handleClientMessage(Message message, PeerConnection connection) {
-        // First, pass to the main message handler so dashboard can process it
-        messageHandler.onMessageReceived(message, connection);
-        
         switch (message.getType()) {
-            case USER_JOIN:
+            case USER_JOIN: {
                 // Store username for this connection
                 String username = message.getSender();
                 connectionUsernames.put(connection, username);
-                
-                // Just broadcast the join message once (don't create a new one)
+
+                // Notify server UI (dashboard) about the join so it can update its view
+                messageHandler.onMessageReceived(message, connection);
+
+                // Broadcast the join message and updated peer list
                 broadcast(message);
-                
-                // Send updated peer list to all clients
                 broadcastPeerList();
                 break;
-                
+            }
+
             case PEER_TO_PEER:
-            case FILE:
+            case FILE: {
                 // Forward P2P message or file to target peer
                 String targetUser = message.getReceiver();
                 PeerConnection targetConnection = null;
-                
+
+                // Special case: deliver to admin (server UI) if requested
+                if (targetUser != null && targetUser.equalsIgnoreCase("admin")) {
+                    // Deliver to admin UI: use file handler when message contains file
+                    if (message.getType() == Message.MessageType.FILE && message.getFileTransfer() != null) {
+                        messageHandler.onFileReceived(message.getFileTransfer(), connection);
+                    } else {
+                        // Notify admin UI for admin-targeted P2P messages
+                        messageHandler.onMessageReceived(message, connection);
+                    }
+                    System.out.println("[SERVER] Delivered message from " + message.getSender() + " to admin");
+                    break;
+                }
+
                 // Find the target connection by username
                 for (Map.Entry<PeerConnection, String> entry : connectionUsernames.entrySet()) {
                     if (entry.getValue().equals(targetUser)) {
@@ -151,35 +163,42 @@ public class Server {
                         break;
                     }
                 }
-                
+
                 if (targetConnection != null) {
                     targetConnection.sendMessage(message);
                     String messageType = message.getType() == Message.MessageType.FILE ? "file" : "P2P message";
-                    System.out.println("[SERVER] Forwarded " + messageType + " from " + 
-                        message.getSender() + " to " + targetUser);
+                    System.out.println("[SERVER] Forwarded " + messageType + " from " + message.getSender() + " to " + targetUser);
                 } else {
                     System.err.println("[SERVER] Target user not found: " + targetUser);
                 }
                 break;
-                
+            }
+
             case TEXT:
             case BROADCAST:
             case QUIZ_START:
-            case QUIZ_ANSWER:
-                // Broadcast these to all clients
+            case QUIZ_ANSWER: {
+                // Let the server UI (dashboard) see the message, then broadcast
+                messageHandler.onMessageReceived(message, connection);
                 broadcast(message);
                 break;
-                
-            case USER_LEAVE:
+            }
+
+            case USER_LEAVE: {
+                // Notify server UI so it can update its connection maps and UI
+                messageHandler.onMessageReceived(message, connection);
                 connectionUsernames.remove(connection);
                 broadcast(message);
                 broadcastPeerList(); // Update peer list after someone leaves
                 break;
-                
-            default:
-                // For other types, just broadcast
+            }
+
+            default: {
+                // For other types, notify server UI and broadcast
+                messageHandler.onMessageReceived(message, connection);
                 broadcast(message);
                 break;
+            }
         }
     }
     
@@ -187,8 +206,13 @@ public class Server {
      * Broadcast the list of connected peers to all clients
      */
     private void broadcastPeerList() {
-        // Create a list of usernames
+        // Create a list of usernames including admin
         StringBuilder peerList = new StringBuilder();
+        
+        // Add admin first so clients can message the admin
+        peerList.append("admin").append(",");
+        
+        // Add all connected clients
         for (String username : connectionUsernames.values()) {
             peerList.append(username).append(",");
         }
