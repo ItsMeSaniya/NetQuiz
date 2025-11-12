@@ -115,7 +115,9 @@ public class Server {
         for (PeerConnection conn : connections) {
             conn.sendMessage(message);
         }
-        if (!message.getSender().equals(currentUsername)) {
+        // Don't show notification popup for leaderboard broadcasts or own messages
+        if (!message.getSender().equals(currentUsername) && 
+            !message.getContent().contains("🏆 QUIZ LEADERBOARD 🏆")) {
             NotificationServer.notify(
                     "New message from " + message.getSender() + ": " + message.getContent());
 
