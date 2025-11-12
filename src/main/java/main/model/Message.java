@@ -20,7 +20,12 @@ public class Message implements Serializable {
         QUIZ_START,
         QUIZ_ANSWER,
         QUIZ_RESULT,
-        PEER_LIST  // New: Server sends list of connected peers to clients
+        PEER_LIST,  // Server sends list of connected peers to clients
+        SERVER_SHUTDOWN,  // Server is shutting down
+        HEARTBEAT,  // Heartbeat ping/pong
+        CLASS_JOIN,  // Student joins the class for screen sharing
+        CLASS_LEAVE,  // Student leaves the class
+        CLASS_INFO  // Server sends UDP port info to student
     }
     
     private String sender;
@@ -28,6 +33,9 @@ public class Message implements Serializable {
     private String content;
     private MessageType type;
     private LocalDateTime timestamp;
+    
+    // Screen sharing field
+    private int udpPort;  // UDP port for screen sharing
     
     // Quiz-related fields
     private Quiz quizData;
@@ -131,6 +139,14 @@ public class Message implements Serializable {
     
     public void setFileTransfer(FileTransfer fileTransfer) {
         this.fileTransfer = fileTransfer;
+    }
+    
+    public int getUdpPort() {
+        return udpPort;
+    }
+    
+    public void setUdpPort(int udpPort) {
+        this.udpPort = udpPort;
     }
     
     @Override

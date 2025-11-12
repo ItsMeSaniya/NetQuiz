@@ -192,6 +192,18 @@ public class Server {
                 broadcastPeerList(); // Update peer list after someone leaves
                 break;
             }
+            
+            case CLASS_JOIN: {
+                // Student wants to join the class - notify MainDashboard
+                messageHandler.onMessageReceived(message, connection);
+                break;
+            }
+            
+            case CLASS_LEAVE: {
+                // Student leaves the class - notify MainDashboard
+                messageHandler.onMessageReceived(message, connection);
+                break;
+            }
 
             default: {
                 // For other types, notify server UI and broadcast

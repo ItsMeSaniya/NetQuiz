@@ -1622,6 +1622,13 @@ public class MainDashboard extends JFrame implements MessageHandler {
                 }
                 break;
                 
+            case CLASS_JOIN:
+            case CLASS_LEAVE:
+            case CLASS_INFO:
+                // Screen sharing messages - handled by screen sharing tab if implemented
+                System.out.println("[Screen Sharing] Received " + message.getType() + " message");
+                break;
+                
             default:
                 break;
         }
