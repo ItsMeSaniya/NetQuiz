@@ -151,6 +151,32 @@ public class Server {
 
         messageHandler.onServerStatus("Server stopped");
     }
+    
+    /**
+     * Get list of shared files (for admin access)
+     */
+    public List<main.model.FileMetadata> getSharedFiles() {
+        return new ArrayList<>(sharedFiles);
+    }
+    
+    /**
+     * Get file data by ID (for admin download)
+     */
+    public byte[] getFileData(String fileId, String filePath) {
+        // Try memory first
+        byte[] fileData = fileStorage.get(fileId);
+        
+        if (fileData == null && filePath != null) {
+            // Try disk
+            try {
+                fileData = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(filePath));
+            } catch (Exception e) {
+                System.err.println("[SERVER] Failed to read file from disk: " + e.getMessage());
+            }
+        }
+        
+        return fileData;
+    }
 
     /**
      * Broadcast message to all connected peers
@@ -444,6 +470,13 @@ public class Server {
     }
     
     /**
+     * Handle file upload directly (for admin, without connection)
+     */
+    public void handleFileUploadDirect(Message message) {
+        handleFileUpload(message, null);
+    }
+    
+    /**
      * Handle file download request
      */
     private void handleFileDownload(Message message, PeerConnection connection) {
@@ -526,6 +559,44 @@ public class Server {
             } else {
                 System.err.println("[SERVER] Permission denied: " + requestUser + 
                     " tried to delete " + metadata.getFileName());
+            }
+        }
+    }
+    
+    /**
+     * Handle file delete directly (for admin, without connection)
+     */
+    public void handleFileDeleteDirect(Message message, String requestUser) {
+        main.model.FileMetadata metadata = message.getFileMetadata();
+        
+        if (metadata != null && requestUser != null) {
+            // Check permissions (admin or file owner)
+            boolean isAdmin = requestUser.equalsIgnoreCase("admin");
+            boolean isOwner = metadata.getUploader().equals(requestUser);
+            
+            if (isAdmin || isOwner) {
+                // Remove from list
+                sharedFiles.removeIf(f -> f.getFileId().equals(metadata.getFileId()));
+                
+                // Remove from storage
+                fileStorage.remove(metadata.getFileId());
+                
+                // Delete file from disk
+                try {
+                    if (metadata.getFilePath() != null) {
+                        java.nio.file.Files.deleteIfExists(
+                            java.nio.file.Paths.get(metadata.getFilePath())
+                        );
+                    }
+                } catch (Exception e) {
+                    System.err.println("[SERVER] Failed to delete file from disk: " + e.getMessage());
+                }
+                
+                System.out.println("[SERVER] File deleted: " + metadata.getFileName() + 
+                    " by " + requestUser);
+                
+                // Notify all clients about file list update
+                broadcastFileListUpdate();
             }
         }
     }

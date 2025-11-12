@@ -2366,27 +2366,62 @@ public class MainDashboard extends JFrame implements MessageHandler {
      * Request list of shared files from server
      */
     private void requestFileList() {
-        if (serverClient == null || !serverClient.isConnected()) {
-            uploadStatusLabel.setText("Not connected to server");
-            uploadStatusLabel.setForeground(Color.RED);
-            return;
-        }
+        boolean isAdmin = currentUser.getUsername().equalsIgnoreCase("admin") && 
+                         currentUser.getPassword().equals("admin");
         
-        Message request = new Message(currentUser.getUsername(), "server",
-            "REQUEST_FILE_LIST", Message.MessageType.FILE_LIST_REQUEST);
-        serverClient.sendMessage(request);
-        uploadStatusLabel.setText("Refreshing file list...");
-        uploadStatusLabel.setForeground(new Color(100, 100, 100));
+        if (isAdmin) {
+            // Admin: Get file list directly from server
+            if (server != null && server.isRunning()) {
+                List<FileMetadata> fileList = server.getSharedFiles();
+                SwingUtilities.invokeLater(() -> {
+                    sharedFilesListModel.clear();
+                    availableFiles.clear();
+                    for (FileMetadata file : fileList) {
+                        sharedFilesListModel.addElement(file);
+                        availableFiles.add(file);
+                    }
+                    uploadStatusLabel.setText("✓ Found " + fileList.size() + " shared file(s)");
+                    uploadStatusLabel.setForeground(new Color(100, 100, 100));
+                });
+            } else {
+                uploadStatusLabel.setText("Server not running");
+                uploadStatusLabel.setForeground(Color.RED);
+            }
+        } else {
+            // Client: Request from server
+            if (serverClient == null || !serverClient.isConnected()) {
+                uploadStatusLabel.setText("Not connected to server");
+                uploadStatusLabel.setForeground(Color.RED);
+                return;
+            }
+            
+            Message request = new Message(currentUser.getUsername(), "server",
+                "REQUEST_FILE_LIST", Message.MessageType.FILE_LIST_REQUEST);
+            serverClient.sendMessage(request);
+            uploadStatusLabel.setText("Refreshing file list...");
+            uploadStatusLabel.setForeground(new Color(100, 100, 100));
+        }
     }
     
     /**
      * Upload file to server
      */
     private void uploadFileToServer() {
-        if (serverClient == null || !serverClient.isConnected()) {
+        boolean isAdmin = currentUser.getUsername().equalsIgnoreCase("admin") && 
+                         currentUser.getPassword().equals("admin");
+        
+        // Check connection
+        if (!isAdmin && (serverClient == null || !serverClient.isConnected())) {
             JOptionPane.showMessageDialog(this,
                 "You must be connected to the server first!",
                 "Not Connected", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        
+        if (isAdmin && (server == null || !server.isRunning())) {
+            JOptionPane.showMessageDialog(this,
+                "Server is not running!",
+                "Server Not Running", JOptionPane.WARNING_MESSAGE);
             return;
         }
         
@@ -2424,6 +2459,9 @@ public class MainDashboard extends JFrame implements MessageHandler {
      * Perform the actual file upload with progress
      */
     private void performFileUpload(java.io.File file) {
+        boolean isAdmin = currentUser.getUsername().equalsIgnoreCase("admin") && 
+                         currentUser.getPassword().equals("admin");
+        
         SwingWorker<Void, Integer> worker = new SwingWorker<Void, Integer>() {
             @Override
             protected Void doInBackground() throws Exception {
@@ -2459,7 +2497,15 @@ public class MainDashboard extends JFrame implements MessageHandler {
                     uploadMsg.setFileTransfer(fileTransfer);
                     
                     publish(75);
-                    serverClient.sendMessage(uploadMsg);
+                    
+                    if (isAdmin) {
+                        // Admin: Handle upload directly via server
+                        server.handleFileUploadDirect(uploadMsg);
+                    } else {
+                        // Client: Send to server
+                        serverClient.sendMessage(uploadMsg);
+                    }
+                    
                     publish(100);
                     
                     Thread.sleep(500); // Brief pause to show 100%
@@ -2523,10 +2569,20 @@ public class MainDashboard extends JFrame implements MessageHandler {
             return;
         }
         
-        if (serverClient == null || !serverClient.isConnected()) {
+        boolean isAdmin = currentUser.getUsername().equalsIgnoreCase("admin") && 
+                         currentUser.getPassword().equals("admin");
+        
+        if (!isAdmin && (serverClient == null || !serverClient.isConnected())) {
             JOptionPane.showMessageDialog(this,
                 "You must be connected to the server first!",
                 "Not Connected", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        
+        if (isAdmin && (server == null || !server.isRunning())) {
+            JOptionPane.showMessageDialog(this,
+                "Server is not running!",
+                "Server Not Running", JOptionPane.WARNING_MESSAGE);
             return;
         }
         
@@ -2539,17 +2595,42 @@ public class MainDashboard extends JFrame implements MessageHandler {
         if (result == JFileChooser.APPROVE_OPTION) {
             java.io.File saveLocation = fileChooser.getSelectedFile();
             
-            // Send download request
-            Message downloadRequest = new Message(currentUser.getUsername(), "server",
-                selectedFile.getFileId(), Message.MessageType.FILE_DOWNLOAD_REQUEST);
-            downloadRequest.setFileMetadata(selectedFile);
-            
-            // Store save location for when file arrives
-            downloadRequest.setContent(saveLocation.getAbsolutePath());
-            
-            serverClient.sendMessage(downloadRequest);
-            uploadStatusLabel.setText("Downloading " + selectedFile.getFileName() + "...");
-            uploadStatusLabel.setForeground(new Color(33, 150, 243));
+            if (isAdmin) {
+                // Admin: Download directly from server
+                byte[] fileData = server.getFileData(selectedFile.getFileId(), selectedFile.getFilePath());
+                if (fileData != null) {
+                    try {
+                        java.nio.file.Files.write(saveLocation.toPath(), fileData);
+                        uploadStatusLabel.setText("✓ Downloaded: " + selectedFile.getFileName());
+                        uploadStatusLabel.setForeground(new Color(76, 175, 80));
+                        JOptionPane.showMessageDialog(this,
+                            "File downloaded successfully!\n" + saveLocation.getAbsolutePath(),
+                            "Download Complete", JOptionPane.INFORMATION_MESSAGE);
+                    } catch (Exception e) {
+                        uploadStatusLabel.setText("✗ Download failed");
+                        uploadStatusLabel.setForeground(Color.RED);
+                        JOptionPane.showMessageDialog(this,
+                            "Failed to save file: " + e.getMessage(),
+                            "Download Error", JOptionPane.ERROR_MESSAGE);
+                    }
+                } else {
+                    JOptionPane.showMessageDialog(this,
+                        "File not found on server!",
+                        "File Not Found", JOptionPane.ERROR_MESSAGE);
+                }
+            } else {
+                // Client: Send download request
+                Message downloadRequest = new Message(currentUser.getUsername(), "server",
+                    selectedFile.getFileId(), Message.MessageType.FILE_DOWNLOAD_REQUEST);
+                downloadRequest.setFileMetadata(selectedFile);
+                
+                // Store save location for when file arrives
+                downloadRequest.setContent(saveLocation.getAbsolutePath());
+                
+                serverClient.sendMessage(downloadRequest);
+                uploadStatusLabel.setText("Downloading " + selectedFile.getFileName() + "...");
+                uploadStatusLabel.setForeground(new Color(33, 150, 243));
+            }
         }
     }
     
@@ -2565,10 +2646,10 @@ public class MainDashboard extends JFrame implements MessageHandler {
             return;
         }
         
-        boolean isAdmin = currentUser.getUsername().equalsIgnoreCase("admin");
+        boolean isAdminUser = currentUser.getUsername().equalsIgnoreCase("admin");
         boolean isOwner = selectedFile.getUploader().equals(currentUser.getUsername());
         
-        if (!isAdmin && !isOwner) {
+        if (!isAdminUser && !isOwner) {
             JOptionPane.showMessageDialog(this,
                 "You can only delete your own files!",
                 "Permission Denied", JOptionPane.ERROR_MESSAGE);
@@ -2582,13 +2663,28 @@ public class MainDashboard extends JFrame implements MessageHandler {
             JOptionPane.WARNING_MESSAGE);
         
         if (confirm == JOptionPane.YES_OPTION) {
-            Message deleteRequest = new Message(currentUser.getUsername(), "server",
-                selectedFile.getFileId(), Message.MessageType.FILE_DELETE_REQUEST);
-            deleteRequest.setFileMetadata(selectedFile);
-            
-            serverClient.sendMessage(deleteRequest);
-            uploadStatusLabel.setText("Deleting " + selectedFile.getFileName() + "...");
-            uploadStatusLabel.setForeground(new Color(244, 67, 54));
+            if (isAdminUser && server != null && server.isRunning()) {
+                // Admin: Delete directly via server
+                Message deleteRequest = new Message(currentUser.getUsername(), "server",
+                    selectedFile.getFileId(), Message.MessageType.FILE_DELETE_REQUEST);
+                deleteRequest.setFileMetadata(selectedFile);
+                server.handleFileDeleteDirect(deleteRequest, currentUser.getUsername());
+                
+                uploadStatusLabel.setText("✓ Deleted: " + selectedFile.getFileName());
+                uploadStatusLabel.setForeground(new Color(244, 67, 54));
+                
+                // Refresh file list
+                requestFileList();
+            } else if (serverClient != null && serverClient.isConnected()) {
+                // Client: Send delete request to server
+                Message deleteRequest = new Message(currentUser.getUsername(), "server",
+                    selectedFile.getFileId(), Message.MessageType.FILE_DELETE_REQUEST);
+                deleteRequest.setFileMetadata(selectedFile);
+                
+                serverClient.sendMessage(deleteRequest);
+                uploadStatusLabel.setText("Deleting " + selectedFile.getFileName() + "...");
+                uploadStatusLabel.setForeground(new Color(244, 67, 54));
+            }
         }
     }
     
