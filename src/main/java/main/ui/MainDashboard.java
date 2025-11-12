@@ -6,12 +6,16 @@ import main.network.MessageHandler;
 import main.network.NotificationClient;
 import main.network.PeerConnection;
 import main.network.Server;
+import main.network.UDPBroadcaster;
+import main.network.UDPReceiver;
 import main.util.NetworkUtil;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.border.LineBorder;
 import java.awt.*;
+import java.awt.event.ActionListener;
+import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.List;
 
@@ -21,6 +25,7 @@ import java.util.List;
 public class MainDashboard extends JFrame implements MessageHandler {
     private User currentUser;
     private Server server;
+    private Client serverClient;  // Client connection to server
     private List<Client> connectedPeers;
     private Map<String, PeerConnection> peerConnections; // Track peer connections
     private Map<String, String> peerUsernames; // Map IP:Port -> Username
@@ -68,6 +73,7 @@ public class MainDashboard extends JFrame implements MessageHandler {
     private JLabel statusLabel;
     private JLabel ipLabel;
     private JTextField portField;
+    private int serverPort = 0; // Store the server port for students
     private JList<String> peerList;
     private DefaultListModel<String> peerListModel;
     private JTabbedPane tabbedPane;
@@ -80,6 +86,9 @@ public class MainDashboard extends JFrame implements MessageHandler {
         this.connectionUsernames = new HashMap<>();
         this.peerListModel = new DefaultListModel<>();
         this.quizResults = new HashMap<>();
+        this.p2pChatPanels = new HashMap<>();
+        this.p2pInputFields = new HashMap<>();
+        this.p2pPeerListModel = new DefaultListModel<>();
         
         // Start UDP listener for notifications - but don't show popups
         notificationClient = new NotificationClient(msg -> {
@@ -294,16 +303,19 @@ public class MainDashboard extends JFrame implements MessageHandler {
                         return;
                     }
                     
-                    Client client = new Client(ip, port, this, currentUser.getUsername());
-                    if (client.connect()) {
-                        connectedPeers.add(client);
+                    serverClient = new Client(ip, port, this, currentUser.getUsername());
+                    if (serverClient.connect()) {
+                        // Store the server port for later use (e.g., UDP screen sharing)
+                        serverPort = port;
+                        
+                        connectedPeers.add(serverClient);
                         peerListModel.addElement(ip + ":" + port);
                         
                         // Send greeting message
                         Message greeting = new Message(currentUser.getUsername(), "all",
                             currentUser.getUsername() + " has joined the chat",
                             Message.MessageType.USER_JOIN);
-                        client.sendMessage(greeting);
+                        serverClient.sendMessage(greeting);
                         
                         // Update UI - keep connect button disabled, enable disconnect
                         connectToServerButton.setText("Connected");
@@ -388,22 +400,28 @@ public class MainDashboard extends JFrame implements MessageHandler {
         
         // Tab 1: Study Group Chat
         tabbedPane.addTab("Study Chat", createGroupChatTab());
+        
+        // Tab 2: P2P Chat
+        tabbedPane.addTab("P2P Chat", createP2PChatTab());
 
-        // Tab 2: Resource Sharing
+        // Tab 3: Resource Sharing
         tabbedPane.addTab("Resources", createFileSharingTab());
         
-        // Tab 3: Announcements
+        // Tab 4: Announcements
         tabbedPane.addTab("Announcements", createBroadcastTab());
         
-        // Tab 4: Create Quiz (admin only)
+        // Tab 5: Create Quiz (admin only)
         if (isAdmin) {
+            tabbedPane.addTab("Start Class", createStartClassTab());
             tabbedPane.addTab("Create Quiz", createQuizCreatorTab());
-            // Tab 5: Results Dashboard (admin can see all results)
+            // Tab 6: Results Dashboard (admin can see all results)
             tabbedPane.addTab("Results", createLeaderboardTab());
         } else {
-            // Tab 4: Quiz Participation (non-admin only)
+            // Tab 5: Join Class (students)
+            tabbedPane.addTab("Join Class", createJoinClassTab());
+            // Tab 6: Quiz Participation (non-admin only)
             tabbedPane.addTab("Take Quiz", createQuizParticipationTab());
-            // Tab 5: My Results (students can see when shared)
+            // Tab 7: My Results (students can see when shared)
             tabbedPane.addTab("My Results", createStudentLeaderboardTab());
         }
         
@@ -682,6 +700,477 @@ public class MainDashboard extends JFrame implements MessageHandler {
         });
     }
     
+    private JPanel createP2PChatTab() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBackground(Color.WHITE);
+        panel.setBorder(new EmptyBorder(15, 15, 15, 15));
+        
+        // Left sidebar: Peer list with controls
+        JPanel leftPanel = new JPanel(new BorderLayout(5, 5));
+        leftPanel.setBackground(Color.WHITE);
+        leftPanel.setPreferredSize(new Dimension(220, 0));
+        
+        // Title for peer list
+        JLabel peerListTitle = new JLabel("💬 Chats");
+        peerListTitle.setFont(new Font("Segoe UI", Font.BOLD, 16));
+        peerListTitle.setBorder(new EmptyBorder(5, 5, 10, 5));
+        
+        // New chat button
+        JButton newChatBtn = new JButton("+ New Chat");
+        newChatBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        newChatBtn.setBackground(new Color(0, 120, 215));
+        newChatBtn.setForeground(Color.WHITE);
+        newChatBtn.setFocusPainted(false);
+        newChatBtn.setBorderPainted(false);
+        newChatBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        newChatBtn.addActionListener(e -> openNewChatDialog());
+        
+        // Peer list
+        p2pPeerList = new JList<>(p2pPeerListModel);
+        p2pPeerList.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        p2pPeerList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        p2pPeerList.addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                String selectedPeer = p2pPeerList.getSelectedValue();
+                if (selectedPeer != null) {
+                    switchToP2PChat(selectedPeer);
+                }
+            }
+        });
+        JScrollPane peerScrollPane = new JScrollPane(p2pPeerList);
+        peerScrollPane.setBorder(BorderFactory.createLineBorder(new Color(220, 220, 220)));
+        
+        // Server chat option
+        JButton serverChatBtn = new JButton("💻 Chat with Server");
+        serverChatBtn.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        serverChatBtn.setBackground(new Color(240, 240, 240));
+        serverChatBtn.setFocusPainted(false);
+        serverChatBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        serverChatBtn.addActionListener(e -> switchToP2PChat("Server"));
+        
+        // Broadcast button
+        JButton broadcastBtn = new JButton("📢 Broadcast to Selected");
+        broadcastBtn.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+        broadcastBtn.setBackground(new Color(255, 165, 0));
+        broadcastBtn.setForeground(Color.WHITE);
+        broadcastBtn.setFocusPainted(false);
+        broadcastBtn.setBorderPainted(false);
+        broadcastBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        broadcastBtn.addActionListener(e -> openBroadcastDialog());
+        
+        JPanel leftButtonPanel = new JPanel(new GridLayout(3, 1, 5, 5));
+        leftButtonPanel.setBackground(Color.WHITE);
+        leftButtonPanel.add(newChatBtn);
+        leftButtonPanel.add(serverChatBtn);
+        leftButtonPanel.add(broadcastBtn);
+        
+        leftPanel.add(peerListTitle, BorderLayout.NORTH);
+        leftPanel.add(peerScrollPane, BorderLayout.CENTER);
+        leftPanel.add(leftButtonPanel, BorderLayout.SOUTH);
+        
+        // Right panel: Chat tabs
+        p2pChatTabs = new JTabbedPane();
+        p2pChatTabs.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        p2pChatTabs.setTabPlacement(JTabbedPane.TOP);
+        
+        // Add a welcome panel
+        JPanel welcomePanel = new JPanel(new BorderLayout());
+        welcomePanel.setBackground(Color.WHITE);
+        JLabel welcomeLabel = new JLabel("<html><div style='text-align: center;'>" +
+                "<h2>Welcome to P2P Chat!</h2>" +
+                "<p>Click 'New Chat' to start a conversation with another client,<br>" +
+                "or click 'Chat with Server' to message the server directly.</p>" +
+                "<p style='color: gray; font-size: 11px;'>You can also broadcast messages to multiple selected clients.</p>" +
+                "</div></html>", SwingConstants.CENTER);
+        welcomeLabel.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        welcomePanel.add(welcomeLabel, BorderLayout.CENTER);
+        p2pChatTabs.addTab("Welcome", welcomePanel);
+        
+        // Split pane
+        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftPanel, p2pChatTabs);
+        splitPane.setDividerLocation(220);
+        splitPane.setDividerSize(1);
+        
+        panel.add(splitPane, BorderLayout.CENTER);
+        
+        return panel;
+    }
+    
+    private void switchToP2PChat(String peerName) {
+        // Check if chat already exists
+        if (p2pChatPanels.containsKey(peerName)) {
+            // Switch to existing tab
+            int tabIndex = p2pChatTabs.indexOfTab(peerName);
+            if (tabIndex != -1) {
+                p2pChatTabs.setSelectedIndex(tabIndex);
+            }
+        } else {
+            // Create new chat panel
+            createP2PChatPanel(peerName);
+        }
+    }
+    
+    private void createP2PChatPanel(String peerName) {
+        JPanel chatPanel = new JPanel(new BorderLayout(5, 5));
+        chatPanel.setBackground(Color.WHITE);
+        
+        // Messages panel (bubble style)
+        JPanel messagesPanel = new JPanel();
+        messagesPanel.setLayout(new BoxLayout(messagesPanel, BoxLayout.Y_AXIS));
+        messagesPanel.setBackground(new Color(240, 242, 245));
+        messagesPanel.setBorder(new EmptyBorder(10, 10, 10, 10));
+        
+        JScrollPane messagesScrollPane = new JScrollPane(messagesPanel);
+        messagesScrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_ALWAYS);
+        messagesScrollPane.setBorder(null);
+        messagesScrollPane.getVerticalScrollBar().setUnitIncrement(16);
+        
+        // Input panel
+        JPanel inputPanel = new JPanel(new BorderLayout(5, 5));
+        inputPanel.setBackground(Color.WHITE);
+        inputPanel.setBorder(new EmptyBorder(5, 5, 5, 5));
+        
+        JTextField inputField = new JTextField();
+        inputField.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        inputField.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(200, 200, 200)),
+                new EmptyBorder(8, 10, 8, 10)));
+        
+        JButton sendBtn = new JButton("Send");
+        sendBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        sendBtn.setBackground(new Color(0, 120, 215));
+        sendBtn.setForeground(Color.WHITE);
+        sendBtn.setFocusPainted(false);
+        sendBtn.setBorderPainted(false);
+        sendBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        sendBtn.setPreferredSize(new Dimension(80, 40));
+        
+        ActionListener sendAction = e -> {
+            String message = inputField.getText().trim();
+            if (!message.isEmpty()) {
+                sendP2PMessage(peerName, message, messagesPanel);
+                inputField.setText("");
+            }
+        };
+        
+        sendBtn.addActionListener(sendAction);
+        inputField.addActionListener(sendAction);
+        
+        inputPanel.add(inputField, BorderLayout.CENTER);
+        inputPanel.add(sendBtn, BorderLayout.EAST);
+        
+        chatPanel.add(messagesScrollPane, BorderLayout.CENTER);
+        chatPanel.add(inputPanel, BorderLayout.SOUTH);
+        
+        // Store references
+        p2pChatPanels.put(peerName, messagesPanel);
+        p2pInputFields.put(peerName, inputField);
+        
+        // Remove welcome tab if this is the first chat
+        int welcomeIndex = p2pChatTabs.indexOfTab("Welcome");
+        if (welcomeIndex != -1 && p2pChatPanels.size() == 1) {
+            p2pChatTabs.removeTabAt(welcomeIndex);
+        }
+        
+        // Add new tab
+        p2pChatTabs.addTab(peerName, chatPanel);
+        p2pChatTabs.setSelectedIndex(p2pChatTabs.getTabCount() - 1);
+    }
+    
+    private void sendP2PMessage(String peerName, String messageText, JPanel messagesPanel) {
+        try {
+            // Add bubble to UI (own message - right aligned, blue)
+            addP2PBubble(messagesPanel, currentUser.getUsername(), messageText, true);
+            
+            Message message = new Message(
+                currentUser.getUsername(),
+                peerName,
+                messageText,
+                Message.MessageType.PEER_TO_PEER
+            );
+            
+            // If we're running as server (admin), send directly to the peer
+            if (server != null && server.isRunning()) {
+                if (peerName.equals("Server")) {
+                    // Can't message yourself as server
+                    JOptionPane.showMessageDialog(this, 
+                        "Cannot send P2P message to yourself!", 
+                        "Invalid Recipient", 
+                        JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+                
+                // Find the target connection by username
+                PeerConnection targetConn = null;
+                Map<PeerConnection, String> connUsernames = server.getConnectionUsernames();
+                for (Map.Entry<PeerConnection, String> entry : connUsernames.entrySet()) {
+                    if (entry.getValue().equals(peerName)) {
+                        targetConn = entry.getKey();
+                        break;
+                    }
+                }
+                
+                if (targetConn != null && targetConn.isRunning()) {
+                    targetConn.sendMessage(message);
+                } else {
+                    JOptionPane.showMessageDialog(this, 
+                        "Peer '" + peerName + "' is not connected!", 
+                        "Connection Error", 
+                        JOptionPane.WARNING_MESSAGE);
+                }
+            } 
+            // If we're a client, route through the server
+            else if (serverClient != null && serverClient.isConnected()) {
+                serverClient.sendMessage(message);
+            } else {
+                JOptionPane.showMessageDialog(this, 
+                    "Not connected to server!", 
+                    "Connection Error", 
+                    JOptionPane.WARNING_MESSAGE);
+            }
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            JOptionPane.showMessageDialog(this, 
+                "Failed to send message: " + ex.getMessage(), 
+                "Error", 
+                JOptionPane.ERROR_MESSAGE);
+        }
+    }
+    
+    private void addP2PBubble(JPanel messagesPanel, String sender, String message, boolean isOwn) {
+        JPanel bubbleContainer = new JPanel(new FlowLayout(isOwn ? FlowLayout.RIGHT : FlowLayout.LEFT, 10, 5));
+        bubbleContainer.setBackground(new Color(240, 242, 245));
+        bubbleContainer.setMaximumSize(new Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE));
+        
+        JPanel bubble = new JPanel();
+        bubble.setLayout(new BoxLayout(bubble, BoxLayout.Y_AXIS));
+        bubble.setBackground(isOwn ? new Color(0, 120, 215) : Color.WHITE);
+        bubble.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(isOwn ? new Color(0, 120, 215) : new Color(220, 220, 220), 1, true),
+                new EmptyBorder(8, 12, 8, 12)));
+        
+        // Sender label (only for received messages)
+        if (!isOwn) {
+            JLabel senderLabel = new JLabel(sender);
+            senderLabel.setFont(new Font("Segoe UI", Font.BOLD, 11));
+            senderLabel.setForeground(new Color(0, 120, 215));
+            senderLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+            bubble.add(senderLabel);
+            bubble.add(Box.createVerticalStrut(3));
+        }
+        
+        // Message text
+        JTextArea messageArea = new JTextArea(message);
+        messageArea.setEditable(false);
+        messageArea.setLineWrap(true);
+        messageArea.setWrapStyleWord(true);
+        messageArea.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        messageArea.setForeground(isOwn ? Color.WHITE : Color.BLACK);
+        messageArea.setBackground(isOwn ? new Color(0, 120, 215) : Color.WHITE);
+        messageArea.setBorder(null);
+        messageArea.setAlignmentX(Component.LEFT_ALIGNMENT);
+        
+        // Calculate preferred size
+        int maxWidth = 400;
+        messageArea.setSize(maxWidth, Integer.MAX_VALUE);
+        Dimension d = messageArea.getPreferredSize();
+        messageArea.setPreferredSize(new Dimension(Math.min(maxWidth, d.width), d.height));
+        
+        bubble.add(messageArea);
+        
+        // Timestamp
+        String timestamp = new SimpleDateFormat("HH:mm").format(new Date());
+        JLabel timeLabel = new JLabel(timestamp);
+        timeLabel.setFont(new Font("Segoe UI", Font.PLAIN, 10));
+        timeLabel.setForeground(isOwn ? new Color(230, 230, 230) : new Color(120, 120, 120));
+        timeLabel.setAlignmentX(isOwn ? Component.RIGHT_ALIGNMENT : Component.LEFT_ALIGNMENT);
+        bubble.add(Box.createVerticalStrut(3));
+        bubble.add(timeLabel);
+        
+        bubbleContainer.add(bubble);
+        messagesPanel.add(bubbleContainer);
+        messagesPanel.revalidate();
+        
+        // Auto-scroll
+        SwingUtilities.invokeLater(() -> {
+            JScrollPane scrollPane = (JScrollPane) SwingUtilities.getAncestorOfClass(JScrollPane.class, messagesPanel);
+            if (scrollPane != null) {
+                scrollPane.getVerticalScrollBar().setValue(scrollPane.getVerticalScrollBar().getMaximum());
+            }
+        });
+    }
+    
+    private void openNewChatDialog() {
+        if (peerListModel.isEmpty()) {
+            JOptionPane.showMessageDialog(this, 
+                "No peers available. Please connect to the server first!", 
+                "No Peers", 
+                JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        
+        String[] peers = new String[peerListModel.size()];
+        for (int i = 0; i < peerListModel.size(); i++) {
+            peers[i] = peerListModel.getElementAt(i);
+        }
+        
+        String selectedPeer = (String) JOptionPane.showInputDialog(
+                this,
+                "Select a peer to chat with:",
+                "New Chat",
+                JOptionPane.QUESTION_MESSAGE,
+                null,
+                peers,
+                peers[0]);
+        
+        if (selectedPeer != null) {
+            switchToP2PChat(selectedPeer);
+        }
+    }
+    
+    private void openBroadcastDialog() {
+        if (peerListModel.isEmpty()) {
+            JOptionPane.showMessageDialog(this, 
+                "No peers available. Please connect to the server first!", 
+                "No Peers", 
+                JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        
+        // Create a dialog with checkboxes
+        JDialog dialog = new JDialog(this, "Broadcast to Peers", true);
+        dialog.setLayout(new BorderLayout(10, 10));
+        dialog.setSize(400, 350);
+        dialog.setLocationRelativeTo(this);
+        
+        JLabel titleLabel = new JLabel("Select peers to broadcast to:");
+        titleLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        titleLabel.setBorder(new EmptyBorder(10, 10, 5, 10));
+        
+        // Checkboxes for peers
+        JPanel checkboxPanel = new JPanel();
+        checkboxPanel.setLayout(new BoxLayout(checkboxPanel, BoxLayout.Y_AXIS));
+        checkboxPanel.setBackground(Color.WHITE);
+        checkboxPanel.setBorder(new EmptyBorder(5, 15, 5, 15));
+        
+        java.util.List<JCheckBox> checkboxes = new ArrayList<>();
+        for (int i = 0; i < peerListModel.size(); i++) {
+            String peer = peerListModel.getElementAt(i);
+            JCheckBox checkbox = new JCheckBox(peer);
+            checkbox.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+            checkbox.setBackground(Color.WHITE);
+            checkboxes.add(checkbox);
+            checkboxPanel.add(checkbox);
+            checkboxPanel.add(Box.createVerticalStrut(5));
+        }
+        
+        JScrollPane scrollPane = new JScrollPane(checkboxPanel);
+        scrollPane.setBorder(BorderFactory.createLineBorder(new Color(200, 200, 200)));
+        
+        // Message input
+        JTextArea messageArea = new JTextArea(3, 30);
+        messageArea.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        messageArea.setLineWrap(true);
+        messageArea.setWrapStyleWord(true);
+        messageArea.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(200, 200, 200)),
+                new EmptyBorder(5, 5, 5, 5)));
+        JScrollPane messageScrollPane = new JScrollPane(messageArea);
+        
+        JPanel messagePanel = new JPanel(new BorderLayout(5, 5));
+        messagePanel.setBackground(Color.WHITE);
+        messagePanel.setBorder(new EmptyBorder(5, 10, 5, 10));
+        JLabel messageLabel = new JLabel("Message:");
+        messageLabel.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        messagePanel.add(messageLabel, BorderLayout.NORTH);
+        messagePanel.add(messageScrollPane, BorderLayout.CENTER);
+        
+        // Buttons
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        buttonPanel.setBackground(Color.WHITE);
+        
+        JButton sendBtn = new JButton("Send");
+        sendBtn.setBackground(new Color(0, 120, 215));
+        sendBtn.setForeground(Color.WHITE);
+        sendBtn.setFocusPainted(false);
+        sendBtn.addActionListener(e -> {
+            String message = messageArea.getText().trim();
+            if (message.isEmpty()) {
+                JOptionPane.showMessageDialog(dialog, "Please enter a message!", "Empty Message", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            
+            java.util.List<String> selectedPeers = new ArrayList<>();
+            for (JCheckBox cb : checkboxes) {
+                if (cb.isSelected()) {
+                    selectedPeers.add(cb.getText());
+                }
+            }
+            
+            if (selectedPeers.isEmpty()) {
+                JOptionPane.showMessageDialog(dialog, "Please select at least one peer!", "No Selection", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            
+            // Send to selected peers
+            for (String peer : selectedPeers) {
+                try {
+                    Message msg = new Message(
+                        currentUser.getUsername(),
+                        peer,
+                        message,
+                        Message.MessageType.PEER_TO_PEER
+                    );
+                    
+                    // If we're running as server (admin), send directly
+                    if (server != null && server.isRunning()) {
+                        PeerConnection targetConn = null;
+                        Map<PeerConnection, String> connUsernames = server.getConnectionUsernames();
+                        for (Map.Entry<PeerConnection, String> entry : connUsernames.entrySet()) {
+                            if (entry.getValue().equals(peer)) {
+                                targetConn = entry.getKey();
+                                break;
+                            }
+                        }
+                        if (targetConn != null && targetConn.isRunning()) {
+                            targetConn.sendMessage(msg);
+                        }
+                    }
+                    // If we're a client, route through server
+                    else if (serverClient != null && serverClient.isConnected()) {
+                        serverClient.sendMessage(msg);
+                    }
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
+            }
+            
+            JOptionPane.showMessageDialog(dialog, 
+                "Broadcast sent to " + selectedPeers.size() + " peer(s)!", 
+                "Success", 
+                JOptionPane.INFORMATION_MESSAGE);
+            dialog.dispose();
+        });
+        
+        JButton cancelBtn = new JButton("Cancel");
+        cancelBtn.addActionListener(e -> dialog.dispose());
+        
+        buttonPanel.add(sendBtn);
+        buttonPanel.add(cancelBtn);
+        
+        dialog.add(titleLabel, BorderLayout.NORTH);
+        
+        JPanel centerPanel = new JPanel(new BorderLayout(5, 5));
+        centerPanel.setBackground(Color.WHITE);
+        centerPanel.add(scrollPane, BorderLayout.CENTER);
+        centerPanel.add(messagePanel, BorderLayout.SOUTH);
+        
+        dialog.add(centerPanel, BorderLayout.CENTER);
+        dialog.add(buttonPanel, BorderLayout.SOUTH);
+        
+        dialog.setVisible(true);
+    }
+    
     private JPanel createFileSharingTab() {
         JPanel panel = new JPanel(new BorderLayout(10, 10));
         panel.setBackground(Color.WHITE);
@@ -950,6 +1439,357 @@ public class MainDashboard extends JFrame implements MessageHandler {
         return panel;
     }
     
+    // =========================== Start Class Tab (Admin) ===========================
+    private UDPBroadcaster udpBroadcaster;
+    private JLabel broadcastStatusLabel;
+    private JButton startBroadcastButton;
+    private JButton stopBroadcastButton;
+    private JPanel screenPreviewPanel;
+    private WhiteboardPanel whiteboardPanel;
+    private JTextArea classStudentsArea;
+    
+    private JPanel createStartClassTab() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBackground(Color.WHITE);
+        panel.setBorder(new EmptyBorder(15, 15, 15, 15));
+        
+        // Title Panel
+        JPanel titlePanel = new JPanel(new BorderLayout());
+        titlePanel.setOpaque(false);
+        
+        JLabel titleLabel = new JLabel("📡 Start Class - Screen Sharing");
+        titleLabel.setFont(new Font("Segoe UI", Font.BOLD, 18));
+        
+        broadcastStatusLabel = new JLabel("Status: Not Broadcasting");
+        broadcastStatusLabel.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        broadcastStatusLabel.setForeground(new Color(100, 100, 100));
+        
+        titlePanel.add(titleLabel, BorderLayout.NORTH);
+        titlePanel.add(broadcastStatusLabel, BorderLayout.SOUTH);
+        titlePanel.setBorder(new EmptyBorder(0, 0, 10, 0));
+        
+        // Control Panel
+        JPanel controlPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 10));
+        controlPanel.setOpaque(false);
+        
+        startBroadcastButton = new JButton("▶ Start Broadcasting");
+        startBroadcastButton.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        startBroadcastButton.setBackground(new Color(0, 150, 136));
+        startBroadcastButton.setForeground(Color.WHITE);
+        startBroadcastButton.setFocusPainted(false);
+        startBroadcastButton.setBorder(new EmptyBorder(10, 20, 10, 20));
+        startBroadcastButton.addActionListener(e -> startBroadcasting());
+        
+        stopBroadcastButton = new JButton("⏹ Stop Broadcasting");
+        stopBroadcastButton.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        stopBroadcastButton.setBackground(new Color(244, 67, 54));
+        stopBroadcastButton.setForeground(Color.WHITE);
+        stopBroadcastButton.setFocusPainted(false);
+        stopBroadcastButton.setBorder(new EmptyBorder(10, 20, 10, 20));
+        stopBroadcastButton.setEnabled(false);
+        stopBroadcastButton.addActionListener(e -> stopBroadcasting());
+        
+        controlPanel.add(startBroadcastButton);
+        controlPanel.add(stopBroadcastButton);
+        
+        // Content Panel - Split between preview and students
+        JPanel contentPanel = new JPanel(new GridLayout(1, 2, 10, 0));
+        contentPanel.setOpaque(false);
+        
+        // Left: Whiteboard/Preview Panel
+        JPanel leftPanel = new JPanel(new BorderLayout(5, 5));
+        leftPanel.setOpaque(false);
+        
+        JLabel previewLabel = new JLabel("🖊 Whiteboard / Annotations");
+        previewLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        previewLabel.setBorder(new EmptyBorder(5, 0, 5, 0));
+        
+        whiteboardPanel = new WhiteboardPanel(640, 480);
+        whiteboardPanel.setBorder(BorderFactory.createLineBorder(new Color(200, 200, 200), 2));
+        whiteboardPanel.setPreferredSize(new Dimension(400, 300));
+        
+        JPanel whiteboardControls = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        whiteboardControls.setOpaque(false);
+        
+        JButton clearButton = new JButton("Clear");
+        clearButton.addActionListener(e -> whiteboardPanel.clear());
+        
+        JButton colorButton = new JButton("Color");
+        colorButton.addActionListener(e -> {
+            Color color = JColorChooser.showDialog(this, "Choose Drawing Color", Color.BLACK);
+            if (color != null) whiteboardPanel.setDrawingColor(color);
+        });
+        
+        JLabel brushLabel = new JLabel("Brush:");
+        JSpinner brushSpinner = new JSpinner(new SpinnerNumberModel(3, 1, 20, 1));
+        brushSpinner.addChangeListener(e -> 
+            whiteboardPanel.setBrushSize((Integer) brushSpinner.getValue()));
+        
+        whiteboardControls.add(clearButton);
+        whiteboardControls.add(colorButton);
+        whiteboardControls.add(brushLabel);
+        whiteboardControls.add(brushSpinner);
+        
+        leftPanel.add(previewLabel, BorderLayout.NORTH);
+        leftPanel.add(new JScrollPane(whiteboardPanel), BorderLayout.CENTER);
+        leftPanel.add(whiteboardControls, BorderLayout.SOUTH);
+        
+        // Right: Connected Students Panel
+        JPanel rightPanel = new JPanel(new BorderLayout(5, 5));
+        rightPanel.setOpaque(false);
+        
+        JLabel studentsLabel = new JLabel("👥 Students in Class");
+        studentsLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        studentsLabel.setBorder(new EmptyBorder(5, 0, 5, 0));
+        
+        classStudentsArea = new JTextArea();
+        classStudentsArea.setEditable(false);
+        classStudentsArea.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        classStudentsArea.setText("No students connected yet.\n\nStart broadcasting to allow students to join.");
+        classStudentsArea.setBorder(new EmptyBorder(10, 10, 10, 10));
+        
+        rightPanel.add(studentsLabel, BorderLayout.NORTH);
+        rightPanel.add(new JScrollPane(classStudentsArea), BorderLayout.CENTER);
+        
+        contentPanel.add(leftPanel);
+        contentPanel.add(rightPanel);
+        
+        // Assemble
+        JPanel topPanel = new JPanel(new BorderLayout());
+        topPanel.setOpaque(false);
+        topPanel.add(titlePanel, BorderLayout.NORTH);
+        topPanel.add(controlPanel, BorderLayout.CENTER);
+        
+        panel.add(topPanel, BorderLayout.NORTH);
+        panel.add(contentPanel, BorderLayout.CENTER);
+        
+        return panel;
+    }
+    
+    // =========================== Join Class Tab (Students) ===========================
+    private UDPReceiver udpReceiver;
+    private JLabel receiveStatusLabel;
+    private JButton joinClassButton;
+    private JButton leaveClassButton;
+    private JPanel screenDisplayPanel;
+    private JLabel screenImageLabel;
+    
+    private JPanel createJoinClassTab() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBackground(Color.WHITE);
+        panel.setBorder(new EmptyBorder(15, 15, 15, 15));
+        
+        // Title Panel
+        JPanel titlePanel = new JPanel(new BorderLayout());
+        titlePanel.setOpaque(false);
+        
+        JLabel titleLabel = new JLabel("📺 Join Class - Screen Viewing");
+        titleLabel.setFont(new Font("Segoe UI", Font.BOLD, 18));
+        
+        receiveStatusLabel = new JLabel("Status: Not Joined");
+        receiveStatusLabel.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        receiveStatusLabel.setForeground(new Color(100, 100, 100));
+        
+        titlePanel.add(titleLabel, BorderLayout.NORTH);
+        titlePanel.add(receiveStatusLabel, BorderLayout.SOUTH);
+        titlePanel.setBorder(new EmptyBorder(0, 0, 10, 0));
+        
+        // Control Panel
+        JPanel controlPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 10));
+        controlPanel.setOpaque(false);
+        
+        joinClassButton = new JButton("▶ Join Class");
+        joinClassButton.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        joinClassButton.setBackground(new Color(33, 150, 243));
+        joinClassButton.setForeground(Color.WHITE);
+        joinClassButton.setFocusPainted(false);
+        joinClassButton.setBorder(new EmptyBorder(10, 20, 10, 20));
+        joinClassButton.addActionListener(e -> joinClass());
+        
+        leaveClassButton = new JButton("⏹ Leave Class");
+        leaveClassButton.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        leaveClassButton.setBackground(new Color(244, 67, 54));
+        leaveClassButton.setForeground(Color.WHITE);
+        leaveClassButton.setFocusPainted(false);
+        leaveClassButton.setBorder(new EmptyBorder(10, 20, 10, 20));
+        leaveClassButton.setEnabled(false);
+        leaveClassButton.addActionListener(e -> leaveClass());
+        
+        controlPanel.add(joinClassButton);
+        controlPanel.add(leaveClassButton);
+        
+        // Screen Display Panel
+        screenDisplayPanel = new JPanel(new BorderLayout());
+        screenDisplayPanel.setBackground(Color.BLACK);
+        screenDisplayPanel.setBorder(BorderFactory.createLineBorder(new Color(200, 200, 200), 2));
+        
+        screenImageLabel = new JLabel("Waiting for class to start...", SwingConstants.CENTER);
+        screenImageLabel.setForeground(Color.WHITE);
+        screenImageLabel.setFont(new Font("Segoe UI", Font.PLAIN, 16));
+        
+        screenDisplayPanel.add(screenImageLabel, BorderLayout.CENTER);
+        
+        // Assemble
+        JPanel topPanel = new JPanel(new BorderLayout());
+        topPanel.setOpaque(false);
+        topPanel.add(titlePanel, BorderLayout.NORTH);
+        topPanel.add(controlPanel, BorderLayout.CENTER);
+        
+        panel.add(topPanel, BorderLayout.NORTH);
+        panel.add(screenDisplayPanel, BorderLayout.CENTER);
+        
+        return panel;
+    }
+    
+    // =========================== Screen Sharing Methods ===========================
+    
+    private void startBroadcasting() {
+        if (server == null) {
+            JOptionPane.showMessageDialog(this,
+                "Server must be running to start broadcasting!",
+                "Server Not Running", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        
+        try {
+            int udpPort = Integer.parseInt(portField.getText()) + 1000; // Offset for UDP
+            udpBroadcaster = new UDPBroadcaster(udpPort, currentUser.getUsername());
+            udpBroadcaster.start();
+            
+            startBroadcastButton.setEnabled(false);
+            stopBroadcastButton.setEnabled(true);
+            broadcastStatusLabel.setText("Status: Broadcasting on UDP port " + udpPort);
+            broadcastStatusLabel.setForeground(new Color(0, 150, 136));
+            
+            updateClassStudentsList();
+            
+            JOptionPane.showMessageDialog(this,
+                "Broadcasting started!\nStudents can now join your class.",
+                "Broadcasting Started", JOptionPane.INFORMATION_MESSAGE);
+                
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            JOptionPane.showMessageDialog(this,
+                "Failed to start broadcasting: " + ex.getMessage(),
+                "Broadcast Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+    
+    private void stopBroadcasting() {
+        if (udpBroadcaster != null) {
+            udpBroadcaster.stop();
+            udpBroadcaster = null;
+        }
+        
+        startBroadcastButton.setEnabled(true);
+        stopBroadcastButton.setEnabled(false);
+        broadcastStatusLabel.setText("Status: Not Broadcasting");
+        broadcastStatusLabel.setForeground(new Color(100, 100, 100));
+        
+        classStudentsArea.setText("Broadcasting stopped.\n\nStart broadcasting to allow students to join.");
+    }
+    
+    private void updateClassStudentsList() {
+        if (server == null) return;
+        
+        StringBuilder sb = new StringBuilder();
+        sb.append("Connected Students:\n\n");
+        
+        Map<PeerConnection, String> connMap = server.getConnectionUsernames();
+        if (connMap.isEmpty()) {
+            sb.append("No students connected yet.");
+        } else {
+            int count = 1;
+            for (String username : connMap.values()) {
+                sb.append(count++).append(". ").append(username).append("\n");
+            }
+        }
+        
+        classStudentsArea.setText(sb.toString());
+    }
+    
+    private void joinClass() {
+        if (serverClient == null || !serverClient.isConnected()) {
+            JOptionPane.showMessageDialog(this,
+                "You must be connected to the server first!",
+                "Not Connected", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        
+        if (serverPort == 0) {
+            JOptionPane.showMessageDialog(this,
+                "Server port not available. Please reconnect to the server.",
+                "Connection Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        
+        try {
+            int udpPort = serverPort + 1000; // Same offset as server
+            
+            UDPReceiver.ScreenFrameListener listener = new UDPReceiver.ScreenFrameListener() {
+                @Override
+                public void onFrameReceived(java.awt.image.BufferedImage image, ScreenFrame frame) {
+                    SwingUtilities.invokeLater(() -> {
+                        ImageIcon icon = new ImageIcon(image);
+                        screenImageLabel.setIcon(icon);
+                        screenImageLabel.setText("");
+                    });
+                }
+                
+                @Override
+                public void onError(String error) {
+                    SwingUtilities.invokeLater(() -> {
+                        receiveStatusLabel.setText("Status: Error - " + error);
+                        receiveStatusLabel.setForeground(Color.RED);
+                    });
+                }
+            };
+            
+            udpReceiver = new UDPReceiver(udpPort, listener);
+            udpReceiver.start();
+            
+            // Send CLASS_JOIN message to server to register for UDP broadcast
+            Message joinMsg = new Message(currentUser.getUsername(), "admin", 
+                "JOIN_CLASS", Message.MessageType.CLASS_JOIN);
+            serverClient.sendMessage(joinMsg);
+            
+            joinClassButton.setEnabled(false);
+            leaveClassButton.setEnabled(true);
+            receiveStatusLabel.setText("Status: Joined Class (UDP port " + udpPort + ")");
+            receiveStatusLabel.setForeground(new Color(33, 150, 243));
+            
+            System.out.println("[Join Class] Sent CLASS_JOIN message, listening on UDP port " + udpPort);
+            
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            JOptionPane.showMessageDialog(this,
+                "Failed to join class: " + ex.getMessage(),
+                "Join Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+    
+    private void leaveClass() {
+        if (udpReceiver != null) {
+            udpReceiver.stop();
+            udpReceiver = null;
+        }
+        
+        // Send CLASS_LEAVE message to server
+        if (serverClient != null && serverClient.isConnected()) {
+            Message leaveMsg = new Message(currentUser.getUsername(), "admin", 
+                "LEAVE_CLASS", Message.MessageType.CLASS_LEAVE);
+            serverClient.sendMessage(leaveMsg);
+        }
+        
+        joinClassButton.setEnabled(true);
+        leaveClassButton.setEnabled(false);
+        receiveStatusLabel.setText("Status: Not Joined");
+        receiveStatusLabel.setForeground(new Color(100, 100, 100));
+        
+        screenImageLabel.setIcon(null);
+        screenImageLabel.setText("Left class. Click 'Join Class' to rejoin.");
+    }
+    
     private JPanel createStatusPanel() {
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT));
         panel.setBackground(new Color(240, 240, 240));
@@ -1088,13 +1928,14 @@ public class MainDashboard extends JFrame implements MessageHandler {
         
         Message message = new Message(currentUser.getUsername(), "all", text, Message.MessageType.TEXT);
         
-        // Send to all connected peers (both clients and server connections)
-        for (Client client : connectedPeers) {
-            client.sendMessage(message);
-        }
-        
+        // If we're running a server (admin), broadcast to all server clients
         if (server != null && server.isRunning()) {
             server.broadcast(message);
+        }
+        
+        // If we're a client connected to a server, send through serverClient
+        if (serverClient != null && serverClient.isConnected()) {
+            serverClient.sendMessage(message);
         }
         
         // Display in chat area
@@ -1110,14 +1951,14 @@ public class MainDashboard extends JFrame implements MessageHandler {
         
         Message message = new Message(currentUser.getUsername(), "all", text, Message.MessageType.BROADCAST);
         
-        // Send to all connected peers (clients)
-        for (Client client : connectedPeers) {
-            client.sendMessage(message);
-        }
-        
-        // If we're running a server, broadcast to all server clients
+        // If we're running a server (admin), broadcast to all server clients
         if (server != null && server.isRunning()) {
             server.broadcast(message);
+        }
+        
+        // If we're a client connected to a server, send through serverClient
+        if (serverClient != null && serverClient.isConnected()) {
+            serverClient.sendMessage(message);
         }
         
         // Display locally only once (we won't see it come back because of sender filter)
@@ -1532,6 +2373,25 @@ public class MainDashboard extends JFrame implements MessageHandler {
                 }
                 break;
                 
+            case PEER_TO_PEER:
+                // P2P message received
+                String p2pSender = message.getSender();
+                String p2pContent = message.getContent();
+                
+                // Check if chat panel exists for this peer, if not create it
+                SwingUtilities.invokeLater(() -> {
+                    if (!p2pChatPanels.containsKey(p2pSender)) {
+                        createP2PChatPanel(p2pSender);
+                    }
+                    
+                    // Add message bubble to the chat panel
+                    JPanel messagesPanel = p2pChatPanels.get(p2pSender);
+                    if (messagesPanel != null) {
+                        addP2PBubble(messagesPanel, p2pSender, p2pContent, false);
+                    }
+                });
+                break;
+                
             case FILE:
                 // File received
                 FileTransfer fileTransfer = message.getFileTransfer();
@@ -1605,6 +2465,38 @@ public class MainDashboard extends JFrame implements MessageHandler {
                 }
                 break;
                 
+            case CLASS_JOIN:
+                // Student wants to join the class - add them to UDP broadcaster
+                if (udpBroadcaster != null && udpBroadcaster.isBroadcasting()) {
+                    String joinPeerAddr = connection.getPeerAddress();
+                    // Extract IP (might be in format "IP:Port")
+                    String clientIP = joinPeerAddr.contains(":") ? joinPeerAddr.split(":")[0] : joinPeerAddr;
+                    int udpPort = Integer.parseInt(portField.getText()) + 1000;
+                    
+                    udpBroadcaster.addClient(clientIP, udpPort);
+                    updateClassStudentsList();
+                    
+                    System.out.println("[Screen Sharing] Student " + message.getSender() + 
+                        " joined class from " + clientIP + ":" + udpPort);
+                }
+                break;
+                
+            case CLASS_LEAVE:
+                // Student leaves the class - remove them from UDP broadcaster
+                if (udpBroadcaster != null) {
+                    String leavePeerAddr = connection.getPeerAddress();
+                    // Extract IP (might be in format "IP:Port")
+                    String clientIP = leavePeerAddr.contains(":") ? leavePeerAddr.split(":")[0] : leavePeerAddr;
+                    int udpPort = Integer.parseInt(portField.getText()) + 1000;
+                    
+                    udpBroadcaster.removeClient(clientIP, udpPort);
+                    updateClassStudentsList();
+                    
+                    System.out.println("[Screen Sharing] Student " + message.getSender() + 
+                        " left class from " + clientIP + ":" + udpPort);
+                }
+                break;
+                
             case PEER_LIST:
                 // Received list of connected peers from server - update UI for clients
                 String[] peers = message.getContent().split(",");
@@ -1649,6 +2541,28 @@ public class MainDashboard extends JFrame implements MessageHandler {
                                 peerListModel.addElement(peer);
                             }
                             System.out.println("[DEBUG] Client peer list updated: " + uniquePeers);
+                        }
+                        
+                        // Also update P2P chat peer list
+                        boolean p2pNeedsUpdate = false;
+                        if (p2pPeerListModel.size() != uniquePeers.size()) {
+                            p2pNeedsUpdate = true;
+                        } else {
+                            int i = 0;
+                            for (String peer : uniquePeers) {
+                                if (i >= p2pPeerListModel.size() || !p2pPeerListModel.get(i).equals(peer)) {
+                                    p2pNeedsUpdate = true;
+                                    break;
+                                }
+                                i++;
+                            }
+                        }
+                        
+                        if (p2pNeedsUpdate) {
+                            p2pPeerListModel.clear();
+                            for (String peer : uniquePeers) {
+                                p2pPeerListModel.addElement(peer);
+                            }
                         }
                     }
                     
@@ -1863,6 +2777,48 @@ public class MainDashboard extends JFrame implements MessageHandler {
         SwingUtilities.invokeLater(() -> {
             statusLabel.setText("Status: " + status);
             appendToChat("System: " + status);
+        });
+    }
+    
+    @Override
+    public void onConnectionLost(PeerConnection connection) {
+        SwingUtilities.invokeLater(() -> {
+            // Check if this is our server connection (client side)
+            if (serverClient != null && serverClient.isConnected()) {
+                // Connection was lost while we thought we were connected
+                // This happens when server crashes or network fails
+                
+                // Reset connection state
+                serverClient = null;
+                connectedPeers.clear();
+                
+                // Update UI
+                connectToServerButton.setEnabled(true);
+                connectToServerButton.setText("Connect to Server");
+                disconnectFromServerButton.setEnabled(false);
+                statusLabel.setText("Status: Connection Lost");
+                statusLabel.setForeground(new Color(244, 67, 54));
+                
+                // Clear peer lists
+                peerListModel.clear();
+                p2pPeerListModel.clear();
+                
+                // Notify user
+                appendToChat("\n⚠️ Connection to server lost! Please reconnect.\n");
+                
+                // Show admin system message if admin
+                boolean isAdmin = currentUser.getUsername().equalsIgnoreCase("admin") && 
+                                  currentUser.getPassword().equals("admin");
+                if (isAdmin && systemMessagesArea != null) {
+                    String username = connectionUsernames.get(connection);
+                    if (username != null) {
+                        appendToSystemMessages("❌ Client disconnected: " + username + 
+                            " (" + connection.getPeerAddress() + ")");
+                    } else {
+                        appendToSystemMessages("❌ Client disconnected: " + connection.getPeerAddress());
+                    }
+                }
+            }
         });
     }
     

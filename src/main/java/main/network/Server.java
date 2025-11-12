@@ -20,6 +20,9 @@ public class Server {
     private MessageHandler messageHandler;
     private String currentUsername;
     private Map<PeerConnection, String> connectionUsernames; // Maps connections to usernames
+    private Map<PeerConnection, Long> lastHeartbeatTime; // Track last heartbeat from each client
+    private Thread connectionMonitor;
+    private static final long CLIENT_TIMEOUT = 90000; // 90 seconds - longer than client heartbeat timeout
 
     public Server(int port, MessageHandler messageHandler, String currentUsername) {
         this.port = port;
@@ -27,6 +30,7 @@ public class Server {
         this.currentUsername = currentUsername;
         this.connections = new CopyOnWriteArrayList<>();
         this.connectionUsernames = new ConcurrentHashMap<>();
+        this.lastHeartbeatTime = new ConcurrentHashMap<>();
         this.threadPool = Executors.newCachedThreadPool();
     }
 
@@ -37,13 +41,16 @@ public class Server {
         if (running) {
             return;
         }
+        
+        running = true;
+        
+        // Start connection monitor thread
+        startConnectionMonitor();
 
         threadPool.execute(() -> {
             try {
                 serverSocket = new ServerSocket(port);
                 messageHandler.onServerStatus("Server started on port " + port);
-
-                running = true;
 
                 while (running) {
                     try {
@@ -64,10 +71,18 @@ public class Server {
                             public void onServerStatus(String status) {
                                 messageHandler.onServerStatus(status);
                             }
+                            
+                            @Override
+                            public void onConnectionLost(PeerConnection conn) {
+                                // Remove the connection and notify clients
+                                Server.this.removePeerConnection(conn);
+                                messageHandler.onConnectionLost(conn);
+                            }
                         };
                         
                         PeerConnection connection = new PeerConnection(clientSocket, serverMessageHandler, currentUsername);
                         connections.add(connection);
+                        lastHeartbeatTime.put(connection, System.currentTimeMillis());
                         threadPool.execute(connection);
 
                         messageHandler.onServerStatus("New peer connected: " +
@@ -89,6 +104,11 @@ public class Server {
      */
     public void stop() {
         running = false;
+        
+        // Stop connection monitor
+        if (connectionMonitor != null && connectionMonitor.isAlive()) {
+            connectionMonitor.interrupt();
+        }
 
         // Notify all clients that server is shutting down
         Message serverStopMsg = new Message("Server", "all", 
@@ -108,6 +128,7 @@ public class Server {
         }
         connections.clear();
         connectionUsernames.clear();
+        lastHeartbeatTime.clear();
 
         // Close server socket
         if (serverSocket != null && !serverSocket.isClosed()) {
@@ -176,23 +197,31 @@ public class Server {
             case FILE:
                 // Forward P2P message or file to target peer
                 String targetUser = message.getReceiver();
-                PeerConnection targetConnection = null;
                 
-                // Find the target connection by username
-                for (Map.Entry<PeerConnection, String> entry : connectionUsernames.entrySet()) {
-                    if (entry.getValue().equals(targetUser)) {
-                        targetConnection = entry.getKey();
-                        break;
-                    }
-                }
-                
-                if (targetConnection != null) {
-                    targetConnection.sendMessage(message);
-                    String messageType = message.getType() == Message.MessageType.FILE ? "file" : "P2P message";
-                    System.out.println("[SERVER] Forwarded " + messageType + " from " + 
-                        message.getSender() + " to " + targetUser);
+                // Check if message is for the server (admin)
+                if (targetUser.equalsIgnoreCase("Server") || targetUser.equalsIgnoreCase(currentUsername)) {
+                    // Message is for the server/admin, pass to main handler (already done above)
+                    System.out.println("[SERVER] Received P2P message from " + message.getSender() + " to Server");
                 } else {
-                    System.err.println("[SERVER] Target user not found: " + targetUser);
+                    // Forward to another client
+                    PeerConnection targetConnection = null;
+                    
+                    // Find the target connection by username
+                    for (Map.Entry<PeerConnection, String> entry : connectionUsernames.entrySet()) {
+                        if (entry.getValue().equals(targetUser)) {
+                            targetConnection = entry.getKey();
+                            break;
+                        }
+                    }
+                    
+                    if (targetConnection != null) {
+                        targetConnection.sendMessage(message);
+                        String messageType = message.getType() == Message.MessageType.FILE ? "file" : "P2P message";
+                        System.out.println("[SERVER] Forwarded " + messageType + " from " + 
+                            message.getSender() + " to " + targetUser);
+                    } else {
+                        System.err.println("[SERVER] Target user not found: " + targetUser);
+                    }
                 }
                 break;
                 
@@ -202,6 +231,27 @@ public class Server {
             case QUIZ_ANSWER:
                 // Broadcast these to all clients
                 broadcast(message);
+                break;
+                
+            case HEARTBEAT:
+                // Respond to heartbeat - send it back to keep connection alive
+                lastHeartbeatTime.put(connection, System.currentTimeMillis());
+                Message heartbeatResponse = new Message("server", message.getSender(), "pong", Message.MessageType.HEARTBEAT);
+                connection.sendMessage(heartbeatResponse);
+                break;
+                
+            case CLASS_JOIN:
+                // Student wants to join the class - notify the message handler (MainDashboard)
+                if (messageHandler != null) {
+                    messageHandler.onMessageReceived(message, connection);
+                }
+                break;
+                
+            case CLASS_LEAVE:
+                // Student leaves the class - notify the message handler
+                if (messageHandler != null) {
+                    messageHandler.onMessageReceived(message, connection);
+                }
                 break;
                 
             case USER_LEAVE:
@@ -239,6 +289,7 @@ public class Server {
     public void removePeerConnection(PeerConnection connection) {
         connections.remove(connection);
         String username = connectionUsernames.remove(connection);
+        lastHeartbeatTime.remove(connection);
         
         if (username != null) {
             System.out.println("[SERVER] Removed connection: " + username);
@@ -263,5 +314,56 @@ public class Server {
 
     public List<PeerConnection> getConnections() {
         return new ArrayList<>(connections);
+    }
+    
+    public Map<PeerConnection, String> getConnectionUsernames() {
+        return new HashMap<>(connectionUsernames);
+    }
+    
+    /**
+     * Start monitoring client connections for timeouts
+     */
+    private void startConnectionMonitor() {
+        connectionMonitor = new Thread(() -> {
+            while (running && !Thread.currentThread().isInterrupted()) {
+                try {
+                    Thread.sleep(30000); // Check every 30 seconds
+                    
+                    if (!running) break;
+                    
+                    long currentTime = System.currentTimeMillis();
+                    List<PeerConnection> deadConnections = new ArrayList<>();
+                    
+                    // Check all connections for timeout
+                    for (Map.Entry<PeerConnection, Long> entry : lastHeartbeatTime.entrySet()) {
+                        PeerConnection conn = entry.getKey();
+                        Long lastTime = entry.getValue();
+                        
+                        if (lastTime != null) {
+                            long timeSinceLastHeartbeat = currentTime - lastTime;
+                            if (timeSinceLastHeartbeat > CLIENT_TIMEOUT) {
+                                // Connection has timed out
+                                String username = connectionUsernames.get(conn);
+                                System.err.println("[SERVER] Client timeout: " + username + " (no heartbeat for " + timeSinceLastHeartbeat + "ms)");
+                                deadConnections.add(conn);
+                            }
+                        }
+                    }
+                    
+                    // Remove dead connections
+                    for (PeerConnection conn : deadConnections) {
+                        removePeerConnection(conn);
+                        conn.close();
+                    }
+                    
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        });
+        connectionMonitor.setDaemon(true);
+        connectionMonitor.setName("ConnectionMonitor");
+        connectionMonitor.start();
     }
 }

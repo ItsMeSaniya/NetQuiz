@@ -72,6 +72,8 @@ public class PeerConnection implements Runnable {
                     }
                 }
             } catch (EOFException | SocketException e) {
+                // Connection closed by peer or network error
+                System.out.println("[PeerConnection] Connection lost to " + peerAddress);
                 break;
             } catch (IOException | ClassNotFoundException e) {
                 if (running) {
@@ -83,6 +85,7 @@ public class PeerConnection implements Runnable {
 
         close();
         messageHandler.onServerStatus("Peer disconnected: " + peerAddress);
+        messageHandler.onConnectionLost(this);
         // Popup notification removed
     }
 

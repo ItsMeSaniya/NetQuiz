@@ -21,7 +21,10 @@ public class Message implements Serializable {
         QUIZ_ANSWER,
         QUIZ_RESULT,
         PEER_LIST,  // Server sends list of connected peers to clients
-        SERVER_SHUTDOWN  // Server is shutting down - clients should disconnect
+        SERVER_SHUTDOWN,  // Server is shutting down - clients should disconnect
+        HEARTBEAT,  // Ping/pong to keep connection alive and detect dead connections
+        CLASS_JOIN,  // Student joins the class for screen sharing
+        CLASS_LEAVE  // Student leaves the class
     }
     
     private String sender;
