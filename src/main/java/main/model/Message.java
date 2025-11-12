@@ -34,8 +34,9 @@ public class Message implements Serializable {
     private MessageType type;
     private LocalDateTime timestamp;
     
-    // Screen sharing field
+    // Screen sharing fields
     private int udpPort;  // UDP port for screen sharing
+    private String clientIP;  // Client's actual IP address for UDP
     
     // Quiz-related fields
     private Quiz quizData;
@@ -147,6 +148,14 @@ public class Message implements Serializable {
     
     public void setUdpPort(int udpPort) {
         this.udpPort = udpPort;
+    }
+    
+    public String getClientIP() {
+        return clientIP;
+    }
+    
+    public void setClientIP(String clientIP) {
+        this.clientIP = clientIP;
     }
     
     @Override

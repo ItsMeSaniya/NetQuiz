@@ -1743,10 +1743,20 @@ public class MainDashboard extends JFrame implements MessageHandler {
             // Get the actual port that was assigned
             int localUdpPort = udpReceiver.getLocalPort();
             
-            // Send CLASS_JOIN message with our local UDP port
+            // Get client's local IP address
+            String clientIP = null;
+            try {
+                clientIP = java.net.InetAddress.getLocalHost().getHostAddress();
+            } catch (Exception e) {
+                System.err.println("[Join Class] Could not get local IP: " + e.getMessage());
+                clientIP = "unknown";
+            }
+            
+            // Send CLASS_JOIN message with our local UDP port and IP
             Message joinMsg = new Message(currentUser.getUsername(), "admin", 
                 "JOIN_CLASS", Message.MessageType.CLASS_JOIN);
             joinMsg.setUdpPort(localUdpPort); // Tell server our UDP port
+            joinMsg.setClientIP(clientIP);     // Tell server our IP address
             serverClient.sendMessage(joinMsg);
             
             joinClassButton.setEnabled(false);
@@ -1754,7 +1764,7 @@ public class MainDashboard extends JFrame implements MessageHandler {
             receiveStatusLabel.setText("Status: Joined Class (UDP port " + localUdpPort + ")");
             receiveStatusLabel.setForeground(new Color(33, 150, 243));
             
-            System.out.println("[Join Class] Listening on UDP port " + localUdpPort + ", sent CLASS_JOIN message");
+            System.out.println("[Join Class] Listening on UDP port " + localUdpPort + " at IP " + clientIP + ", sent CLASS_JOIN message");
             
         } catch (Exception ex) {
             ex.printStackTrace();
@@ -1767,17 +1777,27 @@ public class MainDashboard extends JFrame implements MessageHandler {
     
     private void leaveClass() {
         int localUdpPort = 0;
+        String clientIP = null;
+        
         if (udpReceiver != null) {
             localUdpPort = udpReceiver.getLocalPort();
             udpReceiver.stop();
             udpReceiver = null;
         }
         
-        // Send CLASS_LEAVE message to server with our UDP port
+        // Get client IP
+        try {
+            clientIP = java.net.InetAddress.getLocalHost().getHostAddress();
+        } catch (Exception e) {
+            clientIP = "unknown";
+        }
+        
+        // Send CLASS_LEAVE message to server with our UDP port and IP
         if (serverClient != null && serverClient.isConnected()) {
             Message leaveMsg = new Message(currentUser.getUsername(), "admin", 
                 "LEAVE_CLASS", Message.MessageType.CLASS_LEAVE);
             leaveMsg.setUdpPort(localUdpPort); // Tell server which port to remove
+            leaveMsg.setClientIP(clientIP);     // Tell server our IP
             serverClient.sendMessage(leaveMsg);
         }
         
@@ -2466,11 +2486,17 @@ public class MainDashboard extends JFrame implements MessageHandler {
                 break;
                 
             case CLASS_JOIN:
-                // Student wants to join the class - get their UDP port from message
+                // Student wants to join the class - get their UDP port and IP from message
                 if (udpBroadcaster != null && udpBroadcaster.isBroadcasting()) {
-                    String joinPeerAddr = connection.getPeerAddress();
-                    // Extract IP (might be in format "IP:Port")
-                    String clientIP = joinPeerAddr.contains(":") ? joinPeerAddr.split(":")[0] : joinPeerAddr;
+                    // Get the client's IP from the message (client knows their real IP)
+                    String clientIP = message.getClientIP();
+                    
+                    // Fallback to connection IP if not provided in message
+                    if (clientIP == null || clientIP.equals("unknown")) {
+                        String joinPeerAddr = connection.getPeerAddress();
+                        // Extract IP (might be in format "IP:Port")
+                        clientIP = joinPeerAddr.contains(":") ? joinPeerAddr.split(":")[0] : joinPeerAddr;
+                    }
                     
                     // Get the client's UDP port from the message
                     int clientUdpPort = message.getUdpPort();
@@ -2491,9 +2517,15 @@ public class MainDashboard extends JFrame implements MessageHandler {
             case CLASS_LEAVE:
                 // Student leaves the class - remove them from UDP broadcaster
                 if (udpBroadcaster != null) {
-                    String leavePeerAddr = connection.getPeerAddress();
-                    // Extract IP (might be in format "IP:Port")
-                    String clientIP = leavePeerAddr.contains(":") ? leavePeerAddr.split(":")[0] : leavePeerAddr;
+                    // Get the client's IP from the message (client knows their real IP)
+                    String clientIP = message.getClientIP();
+                    
+                    // Fallback to connection IP if not provided in message
+                    if (clientIP == null || clientIP.equals("unknown")) {
+                        String leavePeerAddr = connection.getPeerAddress();
+                        // Extract IP (might be in format "IP:Port")
+                        clientIP = leavePeerAddr.contains(":") ? leavePeerAddr.split(":")[0] : leavePeerAddr;
+                    }
                     
                     // Get the client's UDP port from the message (if provided)
                     int clientUdpPort = message.getUdpPort();
