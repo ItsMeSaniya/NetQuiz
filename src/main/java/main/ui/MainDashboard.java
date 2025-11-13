@@ -1430,12 +1430,19 @@ public class MainDashboard extends JFrame implements MessageHandler {
                 "New quiz started: " + quiz.getTitle(), Message.MessageType.QUIZ_START);
             quizMsg.setQuizData(quiz);
             
+            // Send through direct peer connections
             for (Client client : connectedPeers) {
                 client.sendMessage(quizMsg);
             }
             
+            // If admin is running server, broadcast to all server clients
             if (server != null && server.isRunning()) {
                 server.broadcast(quizMsg);
+            }
+            
+            // If admin is connected as a client to another server, send through serverClient
+            if (serverClient != null && serverClient.isConnected()) {
+                serverClient.sendMessage(quizMsg);
             }
             
             appendToBroadcast("[QUIZ] Started: " + quiz.getTitle());
@@ -2210,9 +2217,10 @@ public class MainDashboard extends JFrame implements MessageHandler {
         // Get leaderboard text
         String leaderboardText = leaderboardArea.getText();
         
-        // Broadcast leaderboard to all students
+        // Broadcast leaderboard to all students using BROADCAST type
+        // (Students check for "QUIZ LEADERBOARD" in content to display it)
         Message leaderboardMsg = new Message(
-            "Admin",
+            currentUser.getUsername(),
             "all",
             leaderboardText,
             Message.MessageType.BROADCAST
@@ -2223,11 +2231,20 @@ public class MainDashboard extends JFrame implements MessageHandler {
             client.sendMessage(leaderboardMsg);
         }
         
+        // Broadcast via server to all server clients
         if (server != null && server.isRunning()) {
             server.broadcast(leaderboardMsg);
         }
         
+        // If admin is connected as a client, also send through serverClient
+        if (serverClient != null && serverClient.isConnected()) {
+            serverClient.sendMessage(leaderboardMsg);
+        }
+        
         appendToBroadcast("[LEADERBOARD] Shared quiz results with all students");
+        JOptionPane.showMessageDialog(this,
+            "Leaderboard has been shared with all students!",
+            "Shared Successfully", JOptionPane.INFORMATION_MESSAGE);
     }
     
     /**
@@ -3199,23 +3216,10 @@ public class MainDashboard extends JFrame implements MessageHandler {
                     quizResults.put(message.getSender(), result);
                     updateLeaderboard();
                     
-                    // Automatically broadcast updated leaderboard to all students in real-time
-                    String leaderboardText = leaderboardArea.getText();
-                    Message leaderboardMsg = new Message(
-                        currentUser.getUsername(),
-                        "all",
-                        leaderboardText,
-                        Message.MessageType.BROADCAST
-                    );
-                    
-                    // Send to all connected peers
-                    for (Client client : connectedPeers) {
-                        client.sendMessage(leaderboardMsg);
-                    }
-                    
-                    if (server != null && server.isRunning()) {
-                        server.broadcast(leaderboardMsg);
-                    }
+                    // Note: Leaderboard is only shared when admin clicks "Share with Students" button
+                    // This gives admin control over when to reveal results
+                    System.out.println("[QUIZ] Result received from " + message.getSender() + 
+                        ": " + earnedPoints + "/" + totalPoints + " points");
                     
                     // Don't show quiz completion messages in group chat
                     
