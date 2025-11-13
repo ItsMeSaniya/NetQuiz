@@ -110,7 +110,7 @@ public class Server {
     }
 
     /**
-     * Stop the server
+     * Stop the server..
      */
     public void stop() {
         running = false;
