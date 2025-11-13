@@ -213,24 +213,23 @@ public class Server {
      * Handle messages received from clients
      */
     private void handleClientMessage(Message message, PeerConnection connection) {
-        // First, pass to the main message handler so dashboard can process it
-        messageHandler.onMessageReceived(message, connection);
-        
         switch (message.getType()) {
-            case USER_JOIN:
+            case USER_JOIN: {
                 // Store username for this connection
                 String username = message.getSender();
                 connectionUsernames.put(connection, username);
-                
-                // Just broadcast the join message once (don't create a new one)
+
+                // Notify server UI (dashboard) about the join so it can update its view
+                messageHandler.onMessageReceived(message, connection);
+
+                // Broadcast the join message and updated peer list
                 broadcast(message);
-                
-                // Send updated peer list to all clients
                 broadcastPeerList();
                 break;
-                
+            }
+
             case PEER_TO_PEER:
-            case FILE:
+            case FILE: {
                 // Forward P2P message or file to target peer
                 String targetUser = message.getReceiver();
                 
@@ -260,12 +259,14 @@ public class Server {
                     }
                 }
                 break;
-                
+            }
+
             case TEXT:
             case BROADCAST:
             case QUIZ_START:
-            case QUIZ_ANSWER:
-                // Broadcast these to all clients
+            case QUIZ_ANSWER: {
+                // Let the server UI (dashboard) see the message, then broadcast
+                messageHandler.onMessageReceived(message, connection);
                 broadcast(message);
                 break;
                 
@@ -320,6 +321,7 @@ public class Server {
                 // For other types, just broadcast
                 broadcast(message);
                 break;
+            }
         }
     }
     
@@ -327,8 +329,13 @@ public class Server {
      * Broadcast the list of connected peers to all clients
      */
     private void broadcastPeerList() {
-        // Create a list of usernames
+        // Create a list of usernames including admin
         StringBuilder peerList = new StringBuilder();
+        
+        // Add admin first so clients can message the admin
+        peerList.append("admin").append(",");
+        
+        // Add all connected clients
         for (String username : connectionUsernames.values()) {
             peerList.append(username).append(",");
         }
