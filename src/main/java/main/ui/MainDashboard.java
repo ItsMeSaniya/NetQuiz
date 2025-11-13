@@ -635,9 +635,7 @@ public class MainDashboard extends JFrame implements MessageHandler {
             }
 
             appendToBroadcast("[QUIZ] Started: " + quiz.getTitle());
-            JOptionPane.showMessageDialog(this,
-                    "Quiz '" + quiz.getTitle() + "' has been started!\nAll connected peers will receive it.",
-                    "Quiz Started", JOptionPane.INFORMATION_MESSAGE);
+            // Popup removed - QuizCreatorPanel already shows confirmation
         });
 
         return quizCreatorPanel;
